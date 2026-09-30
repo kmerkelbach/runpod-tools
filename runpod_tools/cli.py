@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -24,6 +25,7 @@ from runpod_tools.pods import SelectionError
 SUBCOMMANDS: list[str] = [
     "pods", "gpus", "volumes",
     "start", "stop", "resume", "terminate",
+    "wait", "ssh", "run",
 ]
 
 
@@ -47,6 +49,8 @@ class Context:
     env: Mapping[str, str]
     out: Any = field(default_factory=lambda: sys.stdout)
     err: Any = field(default_factory=lambda: sys.stderr)
+    runner: Callable[..., subprocess.CompletedProcess] = subprocess.run
+    execvp: Callable[[str, Sequence[str]], Any] = os.execvp
     _client: RunpodClient | None = None
 
     def client(self) -> RunpodClient:
@@ -107,7 +111,7 @@ def add_yes_flag(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    from runpod_tools.commands import gpus, lifecycle, pods, start, volumes
+    from runpod_tools.commands import gpus, lifecycle, pods, ssh, start, volumes, wait
 
     parser = argparse.ArgumentParser(
         prog="rpt",
@@ -118,7 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"rpt {__version__}")
     sub = parser.add_subparsers(dest="command", metavar="<command>")
     sub.required = True
-    for module in (pods, gpus, volumes, start, lifecycle):
+    for module in (pods, gpus, volumes, start, lifecycle, wait, ssh):
         module.register(sub)
     return parser
 
@@ -130,6 +134,8 @@ def main(
     config_loader: Callable[[], Config] = load_config,
     stdin_isatty: Callable[[], bool] = sys.stdin.isatty,
     env: Mapping[str, str] | None = None,
+    runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    execvp: Callable[[str, Sequence[str]], Any] = os.execvp,
 ) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -139,7 +145,8 @@ def main(
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
-    ctx = Context(client_factory=client_factory, config=config, isatty=stdin_isatty(), env=env)
+    ctx = Context(client_factory=client_factory, config=config, isatty=stdin_isatty(), env=env,
+                  runner=runner, execvp=execvp)
     try:
         return int(args.func(args, ctx) or 0)
     except (UsageError, SelectionError, ConfigError) as exc:

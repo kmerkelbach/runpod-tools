@@ -8,12 +8,15 @@ from runpod_tools.config import Config
 from tests.fakes import FakeTransport, graphql_ok, pod
 
 
-def run(argv, transport=None, isatty=False, config=None, env=None):
-    """Invoke the CLI with a fake client; returns (exit_code)."""
+def run(argv, transport=None, isatty=False, config=None, env=None, runner=None, execvp=None):
+    """Invoke the CLI with a fake client; returns the exit code."""
     transport = transport or FakeTransport()
 
     def factory(**_):
         return RunpodClient("k", transport=transport)
+
+    def forbidden(*a, **k):
+        raise AssertionError(f"unexpected subprocess: {a} {k}")
 
     return main(
         argv,
@@ -21,6 +24,8 @@ def run(argv, transport=None, isatty=False, config=None, env=None):
         config_loader=lambda: config or Config(),
         stdin_isatty=lambda: isatty,
         env=env if env is not None else {"RUNPOD_API_KEY": "k"},
+        runner=runner or forbidden,
+        execvp=execvp or forbidden,
     )
 
 
