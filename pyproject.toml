@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "runpod-tools"
+version = "0.1.0"
+description = "Agent-friendly CLI for managing Runpod pods, templates, and code sync over SSH. Standard library only."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+rpt = "runpod_tools.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["runpod_tools*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
