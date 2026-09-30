@@ -26,6 +26,7 @@ SUBCOMMANDS: list[str] = [
     "pods", "gpus", "volumes",
     "start", "stop", "resume", "terminate",
     "wait", "ssh", "run",
+    "push", "pull", "fetch",
 ]
 
 
@@ -111,7 +112,7 @@ def add_yes_flag(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    from runpod_tools.commands import gpus, lifecycle, pods, ssh, start, volumes, wait
+    from runpod_tools.commands import gpus, lifecycle, pods, ssh, start, sync, volumes, wait
 
     parser = argparse.ArgumentParser(
         prog="rpt",
@@ -122,7 +123,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"rpt {__version__}")
     sub = parser.add_subparsers(dest="command", metavar="<command>")
     sub.required = True
-    for module in (pods, gpus, volumes, start, lifecycle, wait, ssh):
+    for module in (pods, gpus, volumes, start, lifecycle, wait, ssh, sync):
         module.register(sub)
     return parser
 
