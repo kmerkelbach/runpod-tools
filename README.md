@@ -127,4 +127,5 @@ uv venv .venv && uv pip install -e '.[dev]'
 ```
 
 Tests never touch the network or spawn ssh: the client takes an injectable
-transport and commands take an injectable subprocess runner.
+transport and commands take an injectable subprocess runner. (Two tests run
+real `bash` on purpose, to prove the shell quoting rather than eyeball it.)
