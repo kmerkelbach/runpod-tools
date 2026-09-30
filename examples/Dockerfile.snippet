@@ -1,0 +1,20 @@
+# Lines a custom image needs so Runpod pods built from it are reachable and
+# behave like the vendor's base images. Append to your own Dockerfile.
+
+# The pod needs sshd + rsync for `rpt ssh/run/push/pull/fetch`.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        openssh-server rsync curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/run/sshd
+
+# Some base images (e.g. inference servers) set an ENTRYPOINT that would
+# replace the startup script; reset it.
+ENTRYPOINT []
+
+COPY pod-start.sh /pod-start.sh
+RUN chmod +x /pod-start.sh
+CMD ["/pod-start.sh"]
+
+# Gotcha: a network volume mounted at /workspace SHADOWS anything the image
+# bakes under /workspace. Put venvs, data, and tools the image provides under
+# /opt (or anywhere else), never under /workspace.

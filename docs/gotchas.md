@@ -1,0 +1,134 @@
+# Runpod gotchas
+
+Operational facts that shaped this tool. Each one cost real money or hours
+the first time. Where `rpt` handles it, the heading says so.
+
+## Connectivity
+
+**A Secure Cloud pod is not guaranteed a public TCP endpoint.** Runpod's docs
+say otherwise, but the fleet includes proxy-only hosts. A pod placed there has
+no `22/tcp` mapping in `runtime.ports`, so rsync/ssh are impossible; only the
+web terminal and the `ssh.runpod.io` proxy (terminal only, no file transfer)
+work. `rpt start` sends `supportPublicIp: true` by default, which is a
+*scheduling constraint*: only place me where a public port can be exposed.
+`rpt pods` says "no TCP endpoint" when a pod has none.
+
+**Ports are discovered per call and change on restart.** Never cache an
+`ip:port`; ask `rpt pods` (or `rpt wait`) again after a resume.
+
+**Fresh pod, unknown host key.** Non-interactive ssh cannot answer the
+"are you sure?" prompt, so the first rsync to a new pod dies with exit 255,
+"Host key verification failed". `rpt` uses `StrictHostKeyChecking=accept-new`
+and `rpt wait`/`rpt start --wait` run `ssh-keyscan` into `known_hosts` once
+sshd answers. Runpod reuses `ip:port` pairs across pods, so a stale entry for
+the same endpoint is removed first (otherwise the *new* key is refused as a
+man-in-the-middle).
+
+**sshd throttles you if you poll hard.** Several background monitors, each
+opening a few ssh sessions every minute, trip `MaxStartups` and every new
+connection is dropped during the banner exchange. It looks exactly like a
+dead pod. The pod is fine. Kill your local hung ssh clients, back off, then
+one patient probe a minute apart. Steady state: one consolidated ssh call per
+check, no stacked watchers. `rpt wait` defaults to a 15 s poll for this
+reason.
+
+## Environment on the pod
+
+**Template env vars and secrets live in PID 1 only.** sshd spawns fresh
+shells that do not inherit them, so `ssh pod 'python job.py'` sees no
+`HF_TOKEN`. Runpod's base images write `/etc/rp_environment` at start;
+`rpt run` sources it before every command. A custom image must write the
+file itself (`examples/pod-start.sh`).
+
+**Pods do not have `RUNPOD_API_KEY` or `RUNPOD_POD_ID`** unless the template
+puts them there. A pod-side killswitch needs the key passed in explicitly
+(see `examples/killswitch.sh`), or a template env var referencing a secret
+that holds it.
+
+**The pod shell may be zsh.** Unquoted `$var` does not word-split there
+(`ssh $OPTS ...` passes one argument). Write options inline or use arrays,
+and put anything non-trivial in a script file you upload and run with
+`bash file.sh`.
+
+**A redirect into a missing directory fails silently under nohup.** `nohup
+python x.py > results/x.log &` with no `results/` directory: the shell
+fails the redirect, nothing starts, and `$!` prints a stale pid.
+`rpt run --background` creates its log directory first; do the same in your
+own launch lines.
+
+## Disks and data
+
+**Stop/resume recreates the container.** Only `/workspace` (the volume)
+survives. `/root`, `/tmp`, installed packages outside the image, running
+processes, killswitch scripts: gone. Keep anything that must survive under
+`/workspace` and re-arm/relaunch after every resume.
+
+**A network volume mounted at `/workspace` shadows anything the image bakes
+there.** A venv or dataset built into the image under `/workspace/...` is
+invisible on every pod that mounts a volume. Bake into `/opt` (or anywhere
+outside the mount).
+
+**Stopped pods are pinned to their host and may never resume** ("not enough
+free GPUs on the host"). Terminate + start is the fallback. So: treat every
+stop as if it were a terminate and fetch first.
+
+**Fetch, verify locally, then destroy, in separate commands.** A quoted
+brace-glob in `scp` fetches nothing remotely, and if the same compound
+command then terminates the pod, the data is gone. Fetch whole directories
+(`rpt fetch`), `ls` the local copy, then terminate.
+
+**Large single-file transfers over rsync can stall**; `tar cf - dir | ssh pod
+'tar xf -'` moved the same data reliably when rsync did not.
+
+**Uplink from a laptop is slow; pod-to-pod is fast.** For N pods, push once
+to one pod, then fan out pod-to-pod with agent forwarding
+(`ssh -A pod1 "rsync -a -e 'ssh -p PORT2' /workspace/x/ root@IP2:/workspace/x/"`).
+
+## Cost
+
+**A cap enforced only by an external poller is not a cap.** A missed wakeup
+or malformed command and the pods run on. Put the stop on the pod
+(`examples/killswitch.sh`) or size the job with `timeout`.
+
+**A stale killswitch kills the next run.** Before launching a new job on a
+pod that ran one before, kill the previous killswitch (`pgrep -f
+'[k]illswitch'`), or it fires on the new job's timeline.
+
+**Driver pods do not need big GPUs.** A pod that only orchestrates a remote
+service or runs CPU work on a default high-end GPU wastes the whole hourly
+rate. Pass an explicit cheap `--gpu-type`.
+
+**Stopped pods still bill for disk.** A stopped pod you would never resume
+(old software stack, nothing on it you need) should be terminated.
+
+## Monitoring
+
+**`pgrep -f NAME` over ssh matches the ssh command itself** (the remote
+`bash -c '... pgrep -f NAME ...'` contains NAME). Bracket the first
+character: `pgrep -f '[N]AME'`. Same for `pkill`, which will otherwise kill
+your own session (exit 255, indistinguishable from throttling).
+
+**Grep markers with an anchored prefix.** Logs that echo model inputs or
+outputs contain words like FAIL and DONE. Match your script's own tag
+(`^\[job1\] DONE`), never a bare word. And `tail -3` is too shallow for a
+completion marker that has scrolled past; use `tail -20` or grep the file.
+
+**A process that died instantly still passes an immediate `pgrep`.** Verify
+a launch after 15 to 20 s with real progress (log lines, files), not with a
+1 s process check.
+
+## API
+
+**Pod listing comes from GraphQL, creation from REST.** The REST pod object
+has no GPU display name and no runtime ports; GraphQL has both. REST is the
+documented way to create/stop. When REST is timing out (it happens) while
+GraphQL still answers, the GraphQL `podFindAndDeployOnDemand` mutation can
+create a pod. See `docs/api-notes.md`.
+
+**REST template reads resolve secret placeholders.** A read-modify-write of
+a template through REST inlines the secret values into the template and
+breaks the indirection. Read via GraphQL, write via REST PATCH. `rpt
+template` does this.
+
+**A timed-out create may still have created a pod.** After any timeout
+storm, `rpt pods` and look for orphans.
