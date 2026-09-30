@@ -23,6 +23,7 @@ from runpod_tools.pods import SelectionError
 # Every registered subcommand, in help order. Nested ones are "parent child".
 SUBCOMMANDS: list[str] = [
     "pods", "gpus", "volumes",
+    "start",
 ]
 
 
@@ -106,7 +107,7 @@ def add_yes_flag(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    from runpod_tools.commands import gpus, pods, volumes
+    from runpod_tools.commands import gpus, pods, start, volumes
 
     parser = argparse.ArgumentParser(
         prog="rpt",
@@ -117,7 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"rpt {__version__}")
     sub = parser.add_subparsers(dest="command", metavar="<command>")
     sub.required = True
-    for module in (pods, gpus, volumes):
+    for module in (pods, gpus, volumes, start):
         module.register(sub)
     return parser
 

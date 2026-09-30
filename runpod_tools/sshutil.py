@@ -135,10 +135,12 @@ def keyscan(
 
 def wait_for_ssh(
     client, pod_id: str, *, timeout: float = 900, poll: float = 15,
-    sleep: Callable[[float], None] = time.sleep, keyscan: Callable[[SshEndpoint], bool] = keyscan,
-    clock: Callable[[], float] = time.monotonic, log: Callable[[str], None] = lambda _m: None,
+    sleep: Callable[[float], None] | None = None, keyscan: Callable[[SshEndpoint], bool] = keyscan,
+    clock: Callable[[], float] | None = None, log: Callable[[str], None] = lambda _m: None,
 ) -> SshEndpoint:
     """Poll until ``pod_id`` exposes 22/tcp *and* its sshd answers a keyscan."""
+    sleep = sleep or time.sleep  # resolved at call time so tests can patch time.sleep
+    clock = clock or time.monotonic
     deadline = clock() + timeout
     announced = False
     while True:
