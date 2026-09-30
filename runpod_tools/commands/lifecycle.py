@@ -50,7 +50,7 @@ def run(args, ctx: Context) -> int:
     meta = ACTIONS[action]
     client = ctx.client()
     pods = select_pods(client.list_pods(), ids=args.pod, select_all=args.all, statuses=meta["statuses"],
-                       interactive=ctx.isatty, multi=True)
+                       interactive=ctx.isatty, multi=True, name_prefix=ctx.config.pod.name_prefix)
 
     for p in pods:
         ctx.print(f"  {_summary(p)}")

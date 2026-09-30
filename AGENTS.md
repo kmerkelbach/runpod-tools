@@ -68,6 +68,6 @@ hard way; follow them unless the person you work for says otherwise.
 
 - Off a terminal, destructive commands need `-y` and otherwise exit 2. That
   is deliberate: pass `-y` only when you have already checked what the
-  command will touch (`rpt pods`, `rpt template show --dry-run`).
+  command will touch (`rpt pods`, `rpt template env ... --dry-run`).
 - Ambiguous pod selection exits 2 with the candidates. Pass `--pod` with an
   id; do not pass `--all` to make an error go away.

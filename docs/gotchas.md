@@ -41,9 +41,11 @@ shells that do not inherit them, so `ssh pod 'python job.py'` sees no
 file itself (`examples/pod-start.sh`).
 
 **Pods do not have `RUNPOD_API_KEY` or `RUNPOD_POD_ID`** unless the template
-puts them there. A pod-side killswitch needs the key passed in explicitly
-(see `examples/killswitch.sh`), or a template env var referencing a secret
-that holds it.
+puts them there. A pod-side killswitch needs the key delivered separately:
+over stdin into a root-only file under `/workspace` (see
+`examples/killswitch.sh`), or as a template env var referencing a secret
+that holds it. Never on a command line: it would sit in `ps` output for the
+life of the process.
 
 **The pod shell may be zsh.** Unquoted `$var` does not word-split there
 (`ssh $OPTS ...` passes one argument). Write options inline or use arrays,

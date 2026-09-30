@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from runpod_tools.cli import Context, OperationError, UsageError
 from runpod_tools.pods import select_pods
-from runpod_tools.sshutil import keyscan, wait_for_ssh
+from runpod_tools.sshutil import NoEndpoint, keyscan, wait_for_ssh
 
 
 def register(sub) -> None:
@@ -18,15 +18,15 @@ def register(sub) -> None:
 
 def run(args, ctx: Context) -> int:
     client = ctx.client()
-    pods = select_pods(client.list_pods(), ids=args.pod, select_all=False,
-                       statuses=["RUNNING", "CREATED"], interactive=ctx.isatty)
+    pods = select_pods(client.list_pods(), ids=args.pod, select_all=False, statuses=["RUNNING", "CREATED"],
+                       interactive=ctx.isatty, name_prefix=ctx.config.pod.name_prefix)
     if len(pods) != 1:
         raise UsageError("wait takes exactly one pod")
     pod_id = pods[0]["id"]
     try:
         ep = wait_for_ssh(client, pod_id, timeout=args.timeout, poll=args.poll,
                           keyscan=lambda e: keyscan(e, runner=ctx.runner), log=ctx.warn)
-    except TimeoutError as exc:
+    except (TimeoutError, NoEndpoint) as exc:
         raise OperationError(str(exc)) from exc
     ctx.print(f"{ep.ip} {ep.port}")
     return 0

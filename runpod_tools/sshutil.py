@@ -20,12 +20,14 @@ Flag choices carried over from production use:
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from runpod_tools.pods import SshEndpoint, ssh_endpoint
+from runpod_tools.api import RunpodError
+from runpod_tools.pods import NO_ENDPOINT_NOTE, SshEndpoint, ssh_endpoint
 
 ENV_PREFIX = "set -a; [ -f /etc/rp_environment ] && . /etc/rp_environment; set +a; "
 
@@ -58,7 +60,7 @@ def remote_command(cmd: str, *, source_env: bool = True) -> str:
 
 
 def _rsync_ssh_string(ep: SshEndpoint, key: Path, *, fast: bool) -> str:
-    return " ".join(ssh_base(ep, key, fast=fast))
+    return shlex.join(ssh_base(ep, key, fast=fast))
 
 
 def rsync_push(
@@ -116,14 +118,16 @@ def keyscan(
 ) -> bool:
     """Record the pod's host key in ``known_hosts``; False while sshd is not answering.
 
-    Runpod reuses ``ip:port`` pairs across pods, so a stale entry for the same
-    endpoint is removed first (otherwise ssh refuses the *new* key as a
-    man-in-the-middle).
+    Runpod reuses ``ip:port`` pairs across pods, so any stale entry for the
+    same endpoint is removed first (otherwise ssh refuses the *new* key as a
+    man-in-the-middle). ``ssh-keygen -R`` runs unconditionally: with
+    ``HashKnownHosts yes`` (Debian/Ubuntu default) the host string is not
+    visible in the file, and the call is harmless when nothing matches.
     """
     known_hosts = known_hosts or Path.home() / ".ssh" / "known_hosts"
     known_hosts.parent.mkdir(parents=True, exist_ok=True)
     host = f"[{ep.ip}]:{ep.port}"
-    if known_hosts.exists() and host in known_hosts.read_text():
+    if known_hosts.exists():
         runner(["ssh-keygen", "-R", host, "-f", str(known_hosts)], capture_output=True, text=True)
     result = runner(["ssh-keyscan", "-p", str(ep.port), "-T", "10", ep.ip], capture_output=True, text=True)
     if result.returncode != 0 or not result.stdout.strip():
@@ -133,25 +137,45 @@ def keyscan(
     return True
 
 
+class NoEndpoint(Exception):
+    """The pod is running but its host exposes no public 22/tcp; waiting will not help."""
+
+
 def wait_for_ssh(
     client, pod_id: str, *, timeout: float = 900, poll: float = 15,
     sleep: Callable[[float], None] | None = None, keyscan: Callable[[SshEndpoint], bool] = keyscan,
     clock: Callable[[], float] | None = None, log: Callable[[str], None] = lambda _m: None,
 ) -> SshEndpoint:
-    """Poll until ``pod_id`` exposes 22/tcp *and* its sshd answers a keyscan."""
+    """Poll until ``pod_id`` exposes 22/tcp *and* its sshd answers a keyscan.
+
+    Raises ``NoEndpoint`` as soon as the pod is RUNNING with a populated port
+    map that has no public 22/tcp (a proxy-only host: no amount of waiting
+    fixes that), ``TimeoutError`` otherwise. Transient API errors are logged
+    and retried until the deadline.
+    """
     sleep = sleep or time.sleep  # resolved at call time so tests can patch time.sleep
     clock = clock or time.monotonic
     deadline = clock() + timeout
     announced = False
+    seen_endpoint = False
     while True:
-        pods = {p.get("id"): p for p in client.list_pods()}
-        ep = ssh_endpoint(pods[pod_id]) if pod_id in pods else None
+        try:
+            pods = {p.get("id"): p for p in client.list_pods()}
+        except RunpodError as exc:
+            log(f"pod {pod_id}: api error while polling ({exc}); retrying")
+            pods = {}
+        pod = pods.get(pod_id)
+        ep = ssh_endpoint(pod) if pod else None
         if ep is not None:
+            seen_endpoint = True
             if not announced:
                 log(f"pod {pod_id}: endpoint {ep.ip}:{ep.port}, waiting for sshd")
                 announced = True
             if keyscan(ep):
                 return ep
+        elif pod and pod.get("desiredStatus") == "RUNNING" and (pod.get("runtime") or {}).get("ports"):
+            raise NoEndpoint(f"pod {pod_id}: {NO_ENDPOINT_NOTE}")
         if clock() >= deadline:
-            raise TimeoutError(f"pod {pod_id}: no reachable SSH endpoint after {timeout:.0f}s")
+            hint = "" if seen_endpoint else f" ({NO_ENDPOINT_NOTE}?)"
+            raise TimeoutError(f"pod {pod_id}: no reachable SSH endpoint after {timeout:.0f}s{hint}")
         sleep(poll)

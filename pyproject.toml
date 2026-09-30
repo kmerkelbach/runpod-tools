@@ -20,5 +20,8 @@ rpt = "runpod_tools.cli:main"
 [tool.setuptools.packages.find]
 include = ["runpod_tools*"]
 
+[tool.setuptools.package-data]
+runpod_tools = ["example-config.toml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

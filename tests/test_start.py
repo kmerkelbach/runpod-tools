@@ -53,7 +53,7 @@ def args(**over):
     base = dict(
         name="n", template_id=None, image=None, image_override=False, gpu_type=None, gpu_count=None,
         cloud_type=None, container_disk_gb=None, volume_gb=None, network_volume_id=None, env=None,
-        docker_args=None, ports=None, no_public_ip=False,
+        docker_start_cmd=None, ports=None, no_public_ip=False,
     )
     base.update(over)
     return SimpleNamespace(**base)
@@ -98,13 +98,13 @@ def test_payload_image_with_template_but_no_override_is_an_error():
 def test_payload_cli_overrides_config_and_optional_fields():
     cfg = PodDefaults(template_id="tpl", volume_gb=100, network_volume_id="vol", ports="22/tcp,8888/http")
     p = build_payload(cfg, args(gpu_type="NVIDIA RTX A4000", gpu_count=2, cloud_type="COMMUNITY",
-                                container_disk_gb=20, env=["A=1"], docker_args="bash -c sleep", no_public_ip=True))
+                                container_disk_gb=20, env=["A=1"], docker_start_cmd="bash -c sleep", no_public_ip=True))
     assert p["gpuTypeIds"] == ["NVIDIA RTX A4000"] and p["gpuCount"] == 2 and p["cloudType"] == "COMMUNITY"
     assert p["containerDiskInGb"] == 20
     assert p["volumeInGb"] == 100 and p["volumeMountPath"] == "/workspace"
     assert p["networkVolumeId"] == "vol"
     assert p["env"] == {"A": "1"}
-    assert p["dockerArgs"] == "bash -c sleep"
+    assert p["dockerStartCmd"] == ["bash", "-c", "sleep"]
     assert p["ports"] == ["22/tcp", "8888/http"]
     assert p["supportPublicIp"] is False
 
@@ -155,7 +155,8 @@ def test_start_retries_until_capacity(capsys, monkeypatch):
 
 def test_start_gives_up_after_max_retries(capsys, monkeypatch):
     monkeypatch.setattr("runpod_tools.commands.start.time.sleep", lambda s: None)
-    t = FakeTransport().queue(400, {"error": "none"}).queue(400, {"error": "none"})
+    t = (FakeTransport().queue(400, {"error": "no instances available"})
+         .queue(400, {"error": "no instances available"}))
     assert run(["start", "--retry", "1", "--max-retries", "2"], t, config=cfg_with_template()) == 1
     assert "after 2 attempts" in capsys.readouterr().err
 
@@ -180,7 +181,7 @@ def test_start_delay_interrupted_creates_nothing(capsys, monkeypatch):
 
 def test_start_wait_blocks_until_ssh(capsys, monkeypatch):
     monkeypatch.setattr("runpod_tools.commands.start.time.sleep", lambda s: None)
-    monkeypatch.setattr("runpod_tools.commands.start.keyscan", lambda ep: True)
+    monkeypatch.setattr("runpod_tools.commands.start.keyscan", lambda ep, **kw: True)
     t = (FakeTransport().queue(201, CREATED)
          .queue(*graphql_ok({"myself": {"pods": [pod(id="newpod", runtime=None)]}}))
          .queue(*graphql_ok({"myself": {"pods": [pod(id="newpod")]}})))
@@ -188,3 +189,66 @@ def test_start_wait_blocks_until_ssh(capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "1.2.3.4:40022" in out
     assert out.rstrip().splitlines()[-1] == "pod_id=newpod"
+
+
+# --- review fixes ---------------------------------------------------------------
+
+def test_start_wait_timeout_still_prints_pod_id_and_exits_1(capsys, monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    ticks = iter(range(0, 100000, 100))
+    monkeypatch.setattr("time.monotonic", lambda: next(ticks))
+    monkeypatch.setattr("runpod_tools.commands.start.keyscan", lambda ep, **kw: True)
+    t = FakeTransport().queue(201, CREATED)
+    for _ in range(30):
+        t.queue(*graphql_ok({"myself": {"pods": [pod(id="newpod", runtime=None)]}}))
+    assert run(["start", "--wait", "--wait-timeout", "300"], t, config=cfg_with_template()) == 1
+    out, err = capsys.readouterr()
+    assert out.rstrip().splitlines()[-1] == "pod_id=newpod"
+    assert "newpod" in err and "no reachable SSH" in err
+
+
+def test_start_checks_api_key_before_delay(capsys, monkeypatch):
+    slept = []
+    monkeypatch.setattr("runpod_tools.commands.start.time.sleep", slept.append)
+
+    def factory(**_):
+        from runpod_tools.api import client_from_env
+        return client_from_env(env={})
+
+    from runpod_tools.cli import main
+    code = main(["start", "--delay", "1h"], client_factory=factory, config_loader=cfg_with_template,
+                stdin_isatty=lambda: False, env={})
+    assert code == 2
+    assert slept == []
+
+
+def test_start_does_not_retry_auth_errors(capsys, monkeypatch):
+    monkeypatch.setattr("runpod_tools.commands.start.time.sleep", lambda s: None)
+    t = FakeTransport().queue(401, {"error": "Unauthorized"})
+    assert run(["start", "--retry", "1", "--max-retries", "5"], t, config=cfg_with_template()) == 1
+    assert len(t.calls) == 1
+
+
+def test_start_5xx_checks_for_orphan_before_retrying(capsys, monkeypatch):
+    monkeypatch.setattr("runpod_tools.commands.start.time.sleep", lambda s: None)
+    t = (FakeTransport().queue(504, {"error": "gateway timeout"})
+         .queue(*graphql_ok({"myself": {"pods": [pod(id="orphan", name="alice_x")]}})))
+    assert run(["start", "--name", "x", "--retry", "1", "--max-retries", "5"], t, config=cfg_with_template()) == 0
+    out = capsys.readouterr().out
+    assert out.rstrip().splitlines()[-1] == "pod_id=orphan"
+    assert len(t.calls) == 2  # create, list; no second create
+
+
+def test_start_json_redacts_env_in_response(capsys):
+    t = FakeTransport().queue(201, {**CREATED, "env": {"HF_TOKEN": "resolved-secret-value", "DEBUG": "1"}})
+    assert run(["start", "--json"], t, config=cfg_with_template()) == 0
+    out = capsys.readouterr().out
+    assert "resolved-secret-value" not in out
+    assert json.loads(out)["env"]["DEBUG"] == "1"
+
+
+def test_docker_start_cmd_is_sent_as_list():
+    cfg = PodDefaults(template_id="tpl")
+    p = build_payload(cfg, args(docker_start_cmd="bash -c 'sleep infinity'"))
+    assert p["dockerStartCmd"] == ["bash", "-c", "sleep infinity"]
+    assert "dockerArgs" not in p

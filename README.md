@@ -41,20 +41,22 @@ output. Commands that act on a pod take `--pod <id|name-prefix>[,...]`; the
 ones that can fan out also take `--all`. With neither, a single matching pod
 is used automatically; several matches prompt on a terminal and **fail with
 exit 2 listing the candidates when stdin is not a terminal**, so an unattended
-run never hangs. Anything destructive needs `-y` off a terminal.
+run never hangs. Anything destructive needs `-y` off a terminal. When
+`[pod].name_prefix` is set, `--all` and automatic selection only consider pods
+carrying the prefix; an explicit `--pod <id>` can still reach any pod.
 
 | Command | What it does |
 |---|---|
 | `rpt pods [--json] [--status S]` | List pods: GPU, status, uptime, $/hr, $ so far; per running pod an `ssh` command and an `rsync` template, or a note that the host has no TCP endpoint. |
 | `rpt gpus [--secure] [--community] [--json]` | GPU types with VRAM, cloud availability, lowest price. The `id` column is what `--gpu-type` takes. |
 | `rpt volumes [--json]` | Network volumes. Read-only: **this tool has no volume delete.** |
-| `rpt start [...]` | Create a pod from `[pod]` defaults; every flag overrides one value. Prints `pod_id=<id>` last. `--wait` blocks until SSH answers and records the host key. `--delay 2h`, `--retry 60 --max-retries 20` for capacity waits. |
+| `rpt start [...]` | Create a pod from `[pod]` defaults; every flag overrides one value. Prints `pod_id=<id>` last (also when `--wait` times out, since the pod exists and bills). `--wait` blocks until SSH answers and records the host key. `--delay 2h`, `--retry 60 --max-retries 20` for capacity waits (auth errors are never retried; after a 5xx the pod list is checked for an orphan before retrying). |
 | `rpt stop [--pod\|--all] [-y]` | Stop running pod(s). Only `/workspace` survives; `/root` is wiped on resume. |
 | `rpt resume [--pod\|--all] [--gpu-count N] [-y]` | Resume stopped pod(s). Can fail if the host is out of GPUs: then `terminate` + `start`. |
 | `rpt terminate [--pod\|--all] [-y]` | Delete pod(s) and their disks. Fetch first. Network volumes are untouched. |
 | `rpt wait [--pod ID] [--timeout S]` | Block until the pod exposes 22/tcp and sshd answers; prints `<ip> <port>`. |
 | `rpt ssh [--pod ID] [--print]` | Interactive shell, or print the `ssh` command. |
-| `rpt run [--pod\|--all] [--raw] [--background NAME] -- CMD...` | Run a command over ssh with the pod's injected secrets sourced (`/etc/rp_environment`). Exit code is the remote one. `--background` detaches under `nohup` with the log at `/workspace/rpt/NAME.log`. |
+| `rpt run [--pod\|--all] [--raw] [--background NAME] -- CMD...` | Run a command over ssh with the pod's injected secrets sourced (`/etc/rp_environment`). Exit code is the remote one (so a remote 2 is not an `rpt` usage error, and 255 means ssh itself failed). `--background` detaches under `nohup` with the log at `/workspace/rpt/NAME.log`. With `--all`, a pod without an endpoint is skipped and reported. |
 | `rpt push [--pod\|--all] [--delete] [-n]` | rsync `[sync].local_root` to the pod(s) with `push_excludes`. `--delete` is opt-in and announced. |
 | `rpt pull [--pod ID] [--allow-dirty] [-n]` | rsync the remote tree back. Never deletes, size-capped, refuses a dirty git checkout. |
 | `rpt fetch [--pod\|--all] [--dir D]... [-n]` | Download each `fetch_dirs` entry (results, logs, ...) with per-dir excludes. A dir missing on the pod is skipped. |

@@ -4,4 +4,4 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .superpowers/
-runpod-tools.toml
+/runpod-tools.toml

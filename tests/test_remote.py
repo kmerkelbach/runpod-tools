@@ -134,3 +134,20 @@ def test_run_all_iterates_pods_and_reports_worst_exit(capsys):
 def test_run_requires_a_command(capsys):
     t = FakeTransport()
     assert run(["run"], t, config=cfg()) == 2
+
+
+def test_wait_no_endpoint_fails_fast_with_reason(capsys, monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    p = pod(id="p1", runtime={"uptimeInSeconds": 5, "ports": [{"ip": "1.2.3.4", "privatePort": 80, "publicPort": 1, "type": "http"}]})
+    t = FakeTransport().queue(*listing(p)).queue(*listing(p))  # selection, then the first poll
+    assert run(["wait", "--pod", "p1"], t, config=cfg()) == 1
+    assert "no TCP endpoint" in capsys.readouterr().err
+
+
+def test_run_all_skips_pod_without_endpoint_and_reports(capsys):
+    rec = Recorder()
+    no_ep = pod(id="p2", name="b_pod", runtime={"uptimeInSeconds": 1, "ports": None})
+    t = FakeTransport().queue(*listing(READY, no_ep))
+    assert run(["run", "--all", "--", "true"], t, config=cfg(), runner=rec) == 1
+    assert len(rec.calls) == 1
+    assert "b_pod" in capsys.readouterr().err

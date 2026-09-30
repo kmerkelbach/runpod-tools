@@ -1,0 +1,57 @@
+# runpod-tools.toml — per-project settings for `rpt`.
+#
+# Discovery: rpt walks up from the current directory to find this file, or
+# uses $RUNPOD_TOOLS_CONFIG. Every key is optional; the built-in default is
+# shown. Nothing sensitive belongs here: the API key comes from
+# $RUNPOD_API_KEY and pod secrets are referenced as Runpod secrets
+# ('{{ RUNPOD_SECRET_<Name> }}'), never pasted.
+#
+# Commit this file. It holds no secrets — only ids and paths.
+
+[pod]
+# Template id (see `rpt template show` with no id configured to list yours).
+# A template carries the image, env vars/secret refs, exposed ports, and
+# the SSH public key. Strongly preferred over `image`.
+template_id = ""
+# Image used when template_id is empty, or with `rpt start --image-override`.
+image = ""
+# GPU type id as listed by `rpt gpus` (the `id` column, not the display name).
+gpu_type = "NVIDIA H200"
+gpu_count = 1
+# SECURE | COMMUNITY | ALL
+cloud_type = "SECURE"
+container_disk_gb = 50
+# > 0 attaches a per-pod volume at /workspace (survives stop/resume; dies with terminate).
+volume_gb = 0
+# Attach an existing network volume instead (`rpt volumes`). Mounted at /workspace.
+network_volume_id = ""
+# Prefix enforced on EVERY pod name this tool creates, including explicit
+# --name values. Use it on shared accounts so pods are attributable, e.g. "alice_".
+name_prefix = ""
+# Only schedule onto hosts that can expose a public TCP port. Without this a
+# Secure Cloud pod may land on a proxy-only host with no ssh/rsync endpoint.
+support_public_ip = true
+# Ports to expose when creating without a template (a template carries its own).
+ports = ""
+
+[ssh]
+key = "~/.ssh/id_ed25519"
+user = "root"
+
+[sync]
+# The tree `rpt push` uploads; relative paths resolve against this file.
+local_root = "."
+# Where it lands on the pod. /workspace is the persistent mount on most templates.
+remote_dest = "/workspace/project/"
+# Never uploaded (venvs, VCS, outputs, anything the image already provides).
+push_excludes = [".git", ".venv", "__pycache__", "*.pyc", "results", "logs"]
+# Additionally skipped by `rpt pull` (on top of push_excludes).
+pull_excludes = ["checkpoints", "*.pt", "wandb"]
+# `rpt pull` skips files larger than this ("" disables the cap).
+pull_max_size = "10m"
+# Directories `rpt fetch` downloads from <remote_dest>/<dir> to <local_root>/<dir>.
+fetch_dirs = ["results", "logs"]
+
+[sync.fetch_excludes]
+# Per-directory exclude patterns for `rpt fetch`.
+results = ["*.safetensors", "*.bin", "*.pt"]

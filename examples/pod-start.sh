@@ -15,12 +15,44 @@
 #   5. starts sshd and sleeps forever
 #
 # Use it with the Dockerfile lines in examples/Dockerfile.snippet.
+#
+# `pod-start.sh --env-only` just writes the env file and exits (used by the
+# tests; POD_START_ENVIRON / POD_START_ENV_FILE override the paths).
 set -e
 
-# 1. SSH key from the template env
+POD_START_ENVIRON="${POD_START_ENVIRON:-/proc/1/environ}"
+POD_START_ENV_FILE="${POD_START_ENV_FILE:-/etc/rp_environment}"
+
+# Write PID 1's environment as `export NAME=<shell-quoted value>` lines.
+# printf %q quotes each value, so values with quotes, newlines, $() or
+# backticks round-trip as data instead of being executed when the file is
+# sourced. Names that are not valid shell identifiers are dropped.
+write_rp_environment() {
+    [ -r "$POD_START_ENVIRON" ] || return 0
+    local kv name
+    : > "$POD_START_ENV_FILE"
+    chmod 600 "$POD_START_ENV_FILE"
+    while IFS= read -r -d '' kv; do
+        name=${kv%%=*}
+        [[ $name =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+        case "$name" in
+            HOME|PATH|PWD|SHLVL|OLDPWD|TERM|HOSTNAME|_|LS_COLORS|SHELL|USER|LOGNAME) continue ;;
+        esac
+        printf 'export %s=%q\n' "$name" "${kv#*=}" >> "$POD_START_ENV_FILE"
+    done < "$POD_START_ENVIRON"
+    echo "[pod-start] wrote $POD_START_ENV_FILE ($(wc -l < "$POD_START_ENV_FILE" | tr -d ' ') vars)"
+}
+
+if [ "${1:-}" = "--env-only" ]; then
+    write_rp_environment
+    exit 0
+fi
+
+# 1. SSH key from the template env (appended: keys baked into the image stay)
 if [ -n "${SSH_PUBLIC_KEY:-}" ]; then
     mkdir -p /root/.ssh
-    echo "$SSH_PUBLIC_KEY" > /root/.ssh/authorized_keys
+    touch /root/.ssh/authorized_keys
+    grep -qxF "$SSH_PUBLIC_KEY" /root/.ssh/authorized_keys || echo "$SSH_PUBLIC_KEY" >> /root/.ssh/authorized_keys
     chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys
     echo "[pod-start] SSH public key installed"
 fi
@@ -29,13 +61,7 @@ fi
 #    Runpod sets template env vars (and resolved secrets) on PID 1 only; sshd
 #    spawns fresh shells that do not inherit them. Everything except shell
 #    bookkeeping is exported; the file is root-only.
-if [ -r /proc/1/environ ]; then
-    tr '\0' '\n' < /proc/1/environ \
-      | grep -Ev '^(HOME|PATH|PWD|SHLVL|OLDPWD|TERM|HOSTNAME|_|LS_COLORS|SHELL|USER|LOGNAME)=' \
-      | sed -E "s/^([^=]+)=(.*)$/export \1='\2'/" > /etc/rp_environment
-    chmod 600 /etc/rp_environment
-    echo "[pod-start] wrote /etc/rp_environment ($(wc -l < /etc/rp_environment) vars)"
-fi
+write_rp_environment
 for rc in /root/.bashrc /root/.zshrc; do
     if ! grep -q rp_environment "$rc" 2>/dev/null; then
         printf '\n# Runpod-injected env (secrets, tokens)\n[ -f /etc/rp_environment ] && . /etc/rp_environment\n' >> "$rc"

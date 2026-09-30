@@ -71,6 +71,7 @@ def select_pods(
     interactive: bool,
     multi: bool = False,
     prompt: Callable[[str], str] = input,
+    name_prefix: str = "",
 ) -> list[dict]:
     """Resolve which pods a command acts on.
 
@@ -79,21 +80,25 @@ def select_pods(
     automatically; several candidates prompt when ``interactive`` and raise
     ``SelectionError`` (listing them) otherwise, so an unattended agent never
     hangs on a prompt.
+
+    When ``name_prefix`` is configured (shared accounts), ``select_all`` and
+    automatic selection only consider pods carrying it; an explicit id in
+    ``ids`` can still reach any pod.
     """
-    candidates = [p for p in pods if p.get("desiredStatus") in statuses]
-    if select_all:
-        if not candidates:
-            raise SelectionError(f"No pods with status {', '.join(statuses)}.")
-        return list(candidates)
+    in_status = [p for p in pods if p.get("desiredStatus") in statuses]
+    candidates = [p for p in in_status if str(p.get("name", "")).startswith(name_prefix)] if name_prefix else in_status
+    scope = f" named {name_prefix}*" if name_prefix else ""
 
     if ids:
         chosen: list[dict] = []
         for token in [t.strip() for t in ids.split(",") if t.strip()]:
-            chosen.append(_match_one(token, candidates, pods, statuses))
+            chosen.append(_match_one(token, in_status, pods, statuses))
         return chosen
 
     if not candidates:
-        raise SelectionError(f"No pods with status {', '.join(statuses)}.")
+        raise SelectionError(f"No pods with status {', '.join(statuses)}{scope}.")
+    if select_all:
+        return list(candidates)
     if len(candidates) == 1:
         return [candidates[0]]
 

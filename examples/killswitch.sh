@@ -6,27 +6,33 @@
 # outside is not enforced. Missed wakeups, dropped ssh, a crashed laptop, and
 # the pod keeps billing. This runs ON the pod and needs nothing from outside.
 #
-# Usage (on the pod, key passed explicitly — pods do NOT have RUNPOD_API_KEY
-# in their env unless the template puts it there):
+# The key: pods do NOT have RUNPOD_API_KEY in their env unless the template
+# puts it there. This script takes it from $RUNPOD_API_KEY if set (e.g. via a
+# template secret ref), otherwise from a root-only file, default
+# /workspace/.rp_key (override with KILLSWITCH_KEY_FILE). Never put the key
+# on a command line: it would sit in `ps` output for hours.
 #
-#   RUNPOD_API_KEY=... setsid nohup bash /workspace/killswitch.sh <POD_ID> <MAX_HOURS> [stop|terminate] \
-#       > /workspace/killswitch.log 2>&1 &
+# From your machine, with rpt (the key travels over stdin, not argv):
 #
-# From your machine, with rpt:
+#   rpt run --pod <ID> --raw -- 'cat > /workspace/killswitch.sh' < examples/killswitch.sh
+#   printf %s "$RUNPOD_API_KEY" | rpt run --pod <ID> --raw -- 'umask 077; cat > /workspace/.rp_key'
+#   rpt run --pod <ID> --background killswitch -- bash /workspace/killswitch.sh <ID> 8 terminate
 #
-#   rpt run --pod <ID> --raw -- "cat > /workspace/killswitch.sh" < examples/killswitch.sh
-#   rpt run --pod <ID> --background killswitch -- \
-#       "RUNPOD_API_KEY=$RUNPOD_API_KEY bash /workspace/killswitch.sh <ID> 8 terminate"
+# Use a key with the narrowest scope Runpod lets you create for this.
 #
-# Keep it under /workspace: stop/resume recreates the container disk and
-# anything under /root vanishes. Re-arm after every resume. Before launching a
-# NEW run on the same pod, kill the old killswitch (pgrep -f '[k]illswitch')
-# or it will fire on the new run's timeline.
+# Keep everything under /workspace: stop/resume recreates the container disk
+# and anything under /root vanishes. Re-arm after every resume. Before
+# launching a NEW run on the same pod, kill the old killswitch
+# (pgrep -f '[k]illswitch') or it will fire on the new run's timeline.
 set -u
 POD_ID="${1:?pod id required}"
 MAX_H="${2:?max hours required}"
 ACTION="${3:-stop}"
-: "${RUNPOD_API_KEY:?RUNPOD_API_KEY must be set (pass it explicitly; pods do not have it by default)}"
+KEY_FILE="${KILLSWITCH_KEY_FILE:-/workspace/.rp_key}"
+if [ -z "${RUNPOD_API_KEY:-}" ] && [ -r "$KEY_FILE" ]; then
+    RUNPOD_API_KEY="$(tr -d '\n' < "$KEY_FILE")"
+fi
+: "${RUNPOD_API_KEY:?no API key: set RUNPOD_API_KEY or write it to $KEY_FILE (mode 600)}"
 
 echo "[killswitch] armed: pod=$POD_ID cap=${MAX_H}h action=$ACTION start=$(date -u +%FT%TZ)"
 sleep "$(python3 -c "print(int(float('$MAX_H') * 3600))")"

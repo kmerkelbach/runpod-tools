@@ -42,7 +42,7 @@ def _endpoint_or_fail(pod: dict):
 def run_ssh(args, ctx: Context) -> int:
     cfg = ctx.config.ssh
     pods = select_pods(ctx.client().list_pods(), ids=args.pod, select_all=False, statuses=["RUNNING"],
-                       interactive=ctx.isatty)
+                       interactive=ctx.isatty, name_prefix=ctx.config.pod.name_prefix)
     ep = _endpoint_or_fail(pods[0])
     if args.print:
         ctx.print(ssh_command_string(ep, cfg.key, cfg.user))
@@ -70,10 +70,17 @@ def run_run(args, ctx: Context) -> int:
     remote = remote_command(command, source_env=not args.raw)
 
     pods = select_pods(ctx.client().list_pods(), ids=args.pod, select_all=args.all, statuses=["RUNNING"],
-                       interactive=ctx.isatty, multi=True)
+                       interactive=ctx.isatty, multi=True, name_prefix=ctx.config.pod.name_prefix)
     worst = 0
     for pod in pods:
-        ep = _endpoint_or_fail(pod)
+        try:
+            ep = _endpoint_or_fail(pod)
+        except OperationError as exc:
+            if len(pods) == 1:
+                raise
+            ctx.warn(f"skipped: {exc}")
+            worst = max(worst, 1)
+            continue
         if len(pods) > 1:
             ctx.print(f"== {pod.get('name')} ({pod.get('id')}) ==")
         argv = ssh_base(ep, cfg.key) + [ssh_target(ep, cfg.user), remote]

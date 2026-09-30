@@ -23,7 +23,10 @@ primitives. Adapt the shell; keep the safety steps.
 ## Sketch
 
 ```bash
-set -euo pipefail
+#!/usr/bin/env bash
+# needs bash >= 4 (macOS ships 3.2: `brew install bash`); no `set -e`/pipefail on purpose,
+# a throttled ssh probe must not kill the watch loop
+set -u
 N=3; TAG=eval_$(date +%m%d_%H%M); PODS=()
 
 # 1. launch
@@ -46,10 +49,10 @@ for i in "${!PODS[@]}"; do
   rpt run --pod "$p" --background "shard$s" -- \
     "python job.py --shard $s/$N --out /workspace/project/results/${TAG}_shard$s \
        && touch /workspace/SHARD_${s}_DONE || touch /workspace/SHARD_${s}_FAIL"
-  # 7. pod-side cap, key passed explicitly (pods do not have it)
-  rpt run --pod "$p" --raw -- "cat > /workspace/killswitch.sh" < examples/killswitch.sh
-  rpt run --pod "$p" --background killswitch -- \
-    "RUNPOD_API_KEY=$RUNPOD_API_KEY bash /workspace/killswitch.sh $p 8 stop"
+  # 7. pod-side cap; the key goes over stdin into a root-only file, never onto argv
+  rpt run --pod "$p" --raw -- 'cat > /workspace/killswitch.sh' < examples/killswitch.sh
+  printf %s "$RUNPOD_API_KEY" | rpt run --pod "$p" --raw -- 'umask 077; cat > /workspace/.rp_key'
+  rpt run --pod "$p" --background killswitch -- bash /workspace/killswitch.sh "$p" 8 stop
 done
 
 # 5. watch
@@ -75,7 +78,7 @@ while [ "${#pending[@]}" -gt 0 ]; do
       *)    still+=("$p") ;;
     esac
   done
-  pending=("${still[@]}")
+  pending=("${still[@]+"${still[@]}"}")   # safe when still is empty
 done
 # 6. merge results/${TAG}_shard*/ locally
 ```

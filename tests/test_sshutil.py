@@ -180,3 +180,66 @@ def test_wait_for_ssh_keeps_waiting_while_keyscan_fails():
     ep = wait_for_ssh(client, "p1", timeout=100, poll=1, sleep=lambda s: None,
                       keyscan=lambda e: next(outcomes), clock=iter(range(0, 1000)).__next__)
     assert ep == EP
+
+
+# --- review fixes ---------------------------------------------------------------
+
+def test_keyscan_always_clears_stale_entry_even_when_hashed(tmp_path):
+    # HashKnownHosts (Debian/Ubuntu default) hides the host string; ssh-keygen -R must run regardless.
+    known = tmp_path / "known_hosts"
+    known.write_text("|1|hashedhashed= ssh-ed25519 OLD\n")
+    calls = []
+
+    def runner(argv, **kw):
+        calls.append(argv)
+
+        class R:
+            returncode = 0
+            stdout = "[1.2.3.4]:40022 ssh-ed25519 NEW\n" if argv[0] == "ssh-keyscan" else ""
+
+        return R()
+
+    assert keyscan(EP, known_hosts=known, runner=runner)
+    assert calls[0][:2] == ["ssh-keygen", "-R"]
+
+
+def test_wait_for_ssh_fails_fast_when_running_pod_has_ports_but_no_22():
+    from runpod_tools.sshutil import NoEndpoint
+
+    p = pod(id="p1", runtime={"uptimeInSeconds": 5, "ports": [
+        {"ip": "1.2.3.4", "privatePort": 8888, "publicPort": 1, "type": "http"}]})
+    client = ClientStub([[p]])
+    with pytest.raises(NoEndpoint, match="no TCP endpoint"):
+        wait_for_ssh(client, "p1", timeout=100, poll=1, sleep=lambda s: None, keyscan=lambda e: True,
+                     clock=iter(range(0, 1000)).__next__)
+
+
+def test_wait_for_ssh_timeout_mentions_no_endpoint_when_none_seen():
+    client = ClientStub([[pod(id="p1", runtime=None)]] * 50)
+    with pytest.raises(TimeoutError, match="no TCP endpoint"):
+        wait_for_ssh(client, "p1", timeout=10, poll=5, sleep=lambda s: None,
+                     keyscan=lambda e: True, clock=iter(range(0, 1000, 5)).__next__)
+
+
+def test_wait_for_ssh_tolerates_transient_api_errors():
+    from runpod_tools.api import RunpodError
+
+    class Flaky:
+        def __init__(self):
+            self.n = 0
+
+        def list_pods(self):
+            self.n += 1
+            if self.n == 1:
+                raise RunpodError("gateway timeout", 504)
+            return [pod(id="p1")]
+
+    ep = wait_for_ssh(Flaky(), "p1", timeout=100, poll=1, sleep=lambda s: None, keyscan=lambda e: True,
+                      clock=iter(range(0, 1000)).__next__)
+    assert ep == EP
+
+
+def test_rsync_ssh_string_quotes_key_path_with_spaces():
+    argv = rsync_push(Path("/l"), EP, Path("/home/u/my keys/id"), "/w/", [], user="root")
+    e = argv[argv.index("-e") + 1]
+    assert "'/home/u/my keys/id'" in e

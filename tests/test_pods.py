@@ -126,3 +126,27 @@ def test_select_interactive_eof_is_an_error():
 
     with pytest.raises(SelectionError):
         select(interactive=True, prompt=prompt)
+
+
+# --- name_prefix scoping (review fix) ------------------------------------------
+
+OTHER = pod(id="ddd444", name="bob_job")
+SHARED = [RUNNING_A, RUNNING_B, STOPPED_C, OTHER]
+
+
+def test_select_all_respects_name_prefix():
+    got = select_pods(SHARED, ids=None, select_all=True, statuses=["RUNNING"], interactive=False, name_prefix="alice_")
+    assert got == [RUNNING_A, RUNNING_B]
+
+
+def test_auto_select_respects_name_prefix():
+    pods = [OTHER, STOPPED_C]
+    got = select_pods(pods, ids=None, select_all=False, statuses=["EXITED"], interactive=False, name_prefix="alice_")
+    assert got == [STOPPED_C]
+    with pytest.raises(SelectionError, match="alice_"):
+        select_pods([OTHER], ids=None, select_all=False, statuses=["RUNNING"], interactive=False, name_prefix="alice_")
+
+
+def test_explicit_id_can_reach_pods_outside_prefix():
+    got = select_pods(SHARED, ids="ddd444", select_all=False, statuses=["RUNNING"], interactive=False, name_prefix="alice_")
+    assert got == [OTHER]

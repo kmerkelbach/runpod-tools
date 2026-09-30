@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import random
 import re
+import shlex
 import string
 import time
 from collections.abc import Callable
@@ -18,7 +19,7 @@ from datetime import datetime
 from runpod_tools.api import RunpodError
 from runpod_tools.cli import Context, OperationError, UsageError, add_json_flag
 from runpod_tools.config import PodDefaults
-from runpod_tools.sshutil import keyscan, wait_for_ssh
+from runpod_tools.sshutil import NoEndpoint, keyscan, wait_for_ssh
 
 _DURATION = re.compile(r"^(\d+(?:\.\d+)?)([hms])$")
 _UNIT = {"h": 3600, "m": 60, "s": 1}
@@ -95,8 +96,8 @@ def build_payload(cfg: PodDefaults, args) -> dict:
     env = parse_env(args.env)
     if env:
         payload["env"] = env
-    if args.docker_args:
-        payload["dockerArgs"] = args.docker_args
+    if args.docker_start_cmd:
+        payload["dockerStartCmd"] = shlex.split(args.docker_start_cmd)
     ports = args.ports if args.ports is not None else cfg.ports
     if ports:
         payload["ports"] = [p.strip() for p in ports.split(",") if p.strip()]
@@ -123,7 +124,7 @@ def register(sub) -> None:
     p.add_argument("--volume-gb", type=int, help="pod volume at /workspace; 0 disables (default: config)")
     p.add_argument("--network-volume-id", help="attach an existing network volume (default: config)")
     p.add_argument("--env", action="append", metavar="KEY=VALUE", help="extra env var; repeatable")
-    p.add_argument("--docker-args", help="container start command override")
+    p.add_argument("--docker-start-cmd", metavar="CMD", help="container start command override (REST dockerStartCmd)")
     p.add_argument("--ports", help="comma-separated ports, e.g. 22/tcp,8888/http (default: config)")
     p.add_argument("--no-public-ip", action="store_true",
                    help="drop the public-IP scheduling constraint (pod may get no SSH/rsync endpoint)")
@@ -148,11 +149,11 @@ def run(args, ctx: Context) -> int:
     except ValueError as exc:
         raise UsageError(str(exc)) from exc
 
+    client = ctx.client()  # fail on a missing key now, not after a two-hour --delay
     if delay > 0:
         ctx.warn(f"waiting {args.delay} before creating pod {args.name!r} (Ctrl-C cancels)")
         _sleep_in_chunks(delay, ctx)
 
-    client = ctx.client()
     attempts = args.max_retries if args.retry else 1
     result = None
     for attempt in range(1, attempts + 1):
@@ -162,24 +163,38 @@ def run(args, ctx: Context) -> int:
             result = client.create_pod(payload)
             break
         except RunpodError as exc:
-            if exc.status is None or attempt == attempts:
-                if attempts > 1:
+            if not _retryable(exc) or attempt == attempts:
+                if attempts > 1 and _retryable(exc):
                     raise OperationError(f"pod not created after {attempts} attempts: {exc}") from exc
                 raise
+            if exc.status >= 500:
+                # a timed-out or failed create may still have created the pod server-side
+                orphan = _find_by_name(client, args.name)
+                if orphan:
+                    ctx.warn(f"  {exc.message}; but pod {orphan['id']} named {args.name!r} exists; using it")
+                    result = orphan
+                    break
             ctx.warn(f"  {exc.message}; retrying in {args.retry}s")
             time.sleep(args.retry)
 
     assert result is not None
     pod_id = result.get("id")
     if args.json:
-        ctx.print_json(result)
+        ctx.print_json(_redacted(result))
     else:
         machine = result.get("machine") or {}
         ctx.print(f"created pod {pod_id}  name={result.get('name', args.name)}  "
                   f"gpu={machine.get('gpuTypeId', payload['gpuTypeIds'][0])}  "
                   f"dc={machine.get('dataCenterId', '?')}  cost={result.get('costPerHr', 0):.2f} $/hr")
     if args.wait:
-        ep = wait_for_ssh(client, pod_id, timeout=args.wait_timeout, keyscan=keyscan, log=ctx.warn)
+        try:
+            ep = wait_for_ssh(client, pod_id, timeout=args.wait_timeout,
+                              keyscan=lambda e: keyscan(e, runner=ctx.runner), log=ctx.warn)
+        except (TimeoutError, NoEndpoint) as exc:
+            # the pod exists and is billing: hand back its id before failing
+            if not args.json:
+                ctx.print(f"pod_id={pod_id}")
+            raise OperationError(f"{exc}. Pod {pod_id} is still running; `rpt pods` to inspect, `rpt stop --pod {pod_id} -y` to stop.") from exc
         if args.json:
             ctx.warn(f"ssh ready at {ep.ip}:{ep.port}")
         else:
@@ -187,6 +202,35 @@ def run(args, ctx: Context) -> int:
     if not args.json:
         ctx.print(f"pod_id={pod_id}")
     return 0
+
+
+def _retryable(exc: RunpodError) -> bool:
+    """Capacity-style 4xx and server-side 5xx are worth another try; auth and client bugs are not."""
+    if exc.status is None:
+        return False
+    if exc.status in (400, 401, 403, 404, 422):
+        return "available" in exc.message.lower() or "capacity" in exc.message.lower() or "stock" in exc.message.lower()
+    return exc.status >= 500 or exc.status == 429
+
+
+def _find_by_name(client, name: str) -> dict | None:
+    try:
+        return next((p for p in client.list_pods() if p.get("name") == name), None)
+    except RunpodError:
+        return None
+
+
+def _redacted(result: dict) -> dict:
+    from runpod_tools.commands.template import redact
+
+    out = dict(result)
+    env = result.get("env")
+    if isinstance(env, dict):
+        out["env"] = {k: redact(k, str(v)) for k, v in env.items()}
+    elif isinstance(env, list):
+        out["env"] = [{**e, "value": redact(str(e.get("key", "")), str(e.get("value", "")))} if isinstance(e, dict) else e
+                      for e in env]
+    return out
 
 
 def _sleep_in_chunks(seconds: float, ctx: Context) -> None:

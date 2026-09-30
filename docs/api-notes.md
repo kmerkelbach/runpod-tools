@@ -6,7 +6,7 @@ and each has a trap the other does not.
 | Need | API | Endpoint / operation | Why this one |
 |---|---|---|---|
 | List pods with GPU name, uptime, ports | GraphQL | `myself { pods { ... machine { gpuDisplayName } runtime { ports } } }` | REST's pod object lacks the GPU display name and the runtime port map, which is where the ssh `ip:port` lives. |
-| Create a pod | REST | `POST /v1/pods` | Documented, accepts `templateId`, `imageName`, `supportPublicIp`, `networkVolumeId`. GraphQL `podFindAndDeployOnDemand` works as a fallback when REST is down. |
+| Create a pod | REST | `POST /v1/pods` | Documented, accepts `templateId`, `imageName`, `supportPublicIp`, `networkVolumeId`, `dockerStartCmd` (a list; GraphQL calls the same thing `dockerArgs`). GraphQL `podFindAndDeployOnDemand` works as a fallback when REST is down. |
 | Stop a pod | REST | `POST /v1/pods/{id}/stop` | Simple, documented. |
 | Resume a pod | GraphQL | `podResume(input: {podId, gpuCount})` | Needs the GPU count; the REST start endpoint has been unreliable for stopped pods. |
 | Terminate a pod | GraphQL | `podTerminate(input: {podId})` | Returns nothing on success; `rpt` treats "no errors" as done. REST `DELETE /v1/pods/{id}` also works (used by `examples/killswitch.sh` because curl is easier there). |
