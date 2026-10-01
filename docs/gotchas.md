@@ -22,6 +22,13 @@ constraint like the public IP: `rpt start --cuda-version 13.0`, or
 `[pod].allowed_cuda_versions` in the config. Check the GPU from your own code
 right after start regardless.
 
+**A detached job must release the session's streams, or ssh never returns.**
+`mkdir -p d && nohup job > log 2>&1 & echo pid=$!` backgrounds the whole
+`mkdir && nohup` list in a subshell that still holds the session's stdout, and
+sshd waits for it. `rpt run --background` backgrounds only the job and
+redirects stdin, stdout and stderr; do the same in your own launch lines
+(`nohup job > log 2>&1 < /dev/null &`).
+
 **Ports are discovered per call and change on restart.** Never cache an
 `ip:port`; ask `rpt pods` (or `rpt wait`) again after a resume.
 
