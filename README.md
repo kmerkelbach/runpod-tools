@@ -1,5 +1,7 @@
 # runpod-tools
 
+*Distilled by Claude from experimental code written by [@kmerkelbach](https://github.com/kmerkelbach).*
+
 A small command-line tool, `rpt`, for the everyday Runpod loop: create a pod,
 wait for SSH, push code, run a job, fetch results, stop the pod. Plus the
 template plumbing around it (secret references, exposed ports, volume size).

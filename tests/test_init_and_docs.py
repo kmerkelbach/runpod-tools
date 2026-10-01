@@ -59,7 +59,7 @@ def test_shell_examples_parse():
 
 FORBIDDEN = [
     # identifiers that belong to the project these tools were distilled from
-    r"REDACTED", r"REDACTED", r"REDACTED", r"the-source-project", r"kmerkelbach",
+    r"REDACTED", r"REDACTED", r"REDACTED", r"the-source-project", r"REDACTED_",
     r"REDACTED", r"REDACTED", r"tinker", r"deliberative", r"OPENROUTER",
 ]
 
