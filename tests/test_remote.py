@@ -61,7 +61,7 @@ def test_ssh_print_shows_command(capsys):
 def test_ssh_execs_interactive_session():
     execs = []
     t = FakeTransport().queue(*listing(READY))
-    assert run(["ssh"], t, config=cfg(), execvp=lambda prog, argv: execs.append((prog, argv))) == 0
+    assert run(["ssh"], t, config=cfg(), isatty=True, execvp=lambda prog, argv: execs.append((prog, argv))) == 0
     prog, argv = execs[0]
     assert prog == "ssh"
     assert argv[:5] == ["ssh", "-p", "40022", "-i", "/k/id"]
@@ -151,3 +151,16 @@ def test_run_all_skips_pod_without_endpoint_and_reports(capsys):
     assert run(["run", "--all", "--", "true"], t, config=cfg(), runner=rec) == 1
     assert len(rec.calls) == 1
     assert "b_pod" in capsys.readouterr().err
+
+
+def test_ssh_interactive_off_tty_is_refused(capsys):
+    t = FakeTransport().queue(*listing(READY))
+    assert run(["ssh"], t, config=cfg(), isatty=False) == 2
+    assert "--print" in capsys.readouterr().err
+
+
+def test_ssh_interactive_on_tty_execs():
+    execs = []
+    t = FakeTransport().queue(*listing(READY))
+    assert run(["ssh"], t, config=cfg(), isatty=True, execvp=lambda prog, argv: execs.append(prog)) == 0
+    assert execs == ["ssh"]

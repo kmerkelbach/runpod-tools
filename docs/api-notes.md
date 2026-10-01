@@ -5,7 +5,7 @@ and each has a trap the other does not.
 
 | Need | API | Endpoint / operation | Why this one |
 |---|---|---|---|
-| List pods with GPU name, uptime, ports | GraphQL | `myself { pods { ... machine { gpuDisplayName } runtime { ports } } }` | REST's pod object lacks the GPU display name and the runtime port map, which is where the ssh `ip:port` lives. |
+| List pods with GPU name, uptime, ports | GraphQL | `myself { pods { ... machine { gpuDisplayName } runtime { ports } } }` | REST's pod object lacks the GPU display name; its port information (`publicIp`/`portMappings`, when present) is shaped differently. GraphQL gives name, uptime, and the `ip:port` for 22/tcp in one query. |
 | Create a pod | REST | `POST /v1/pods` | Documented, accepts `templateId`, `imageName`, `supportPublicIp`, `networkVolumeId`, `dockerStartCmd` (a list; GraphQL calls the same thing `dockerArgs`). GraphQL `podFindAndDeployOnDemand` works as a fallback when REST is down. |
 | Stop a pod | REST | `POST /v1/pods/{id}/stop` | Simple, documented. |
 | Resume a pod | GraphQL | `podResume(input: {podId, gpuCount})` | Needs the GPU count; the REST start endpoint has been unreliable for stopped pods. |

@@ -150,3 +150,15 @@ def test_auto_select_respects_name_prefix():
 def test_explicit_id_can_reach_pods_outside_prefix():
     got = select_pods(SHARED, ids="ddd444", select_all=False, statuses=["RUNNING"], interactive=False, name_prefix="alice_")
     assert got == [OTHER]
+
+
+def test_ssh_endpoint_ignores_private_ip_mapping():
+    p = pod(runtime={"uptimeInSeconds": 1, "ports": [
+        {"ip": "10.0.0.5", "isIpPublic": False, "privatePort": 22, "publicPort": 22, "type": "tcp"}]})
+    assert ssh_endpoint(p) is None
+
+
+def test_ssh_endpoint_accepts_missing_is_ip_public():
+    p = pod(runtime={"uptimeInSeconds": 1, "ports": [
+        {"ip": "1.2.3.4", "privatePort": 22, "publicPort": 40022, "type": "tcp"}]})
+    assert ssh_endpoint(p) == SshEndpoint("1.2.3.4", 40022)

@@ -60,8 +60,10 @@ def _endpoint(pod: dict):
     return ep
 
 
-def _rsync(ctx: Context, argv: list[str], what: str) -> int:
+def _rsync(ctx: Context, argv: list[str], what: str, *, allow_partial: bool = False) -> int:
     result = ctx.runner(argv)
+    if result.returncode == RSYNC_PARTIAL and not allow_partial:
+        raise OperationError(f"rsync {what}: partial transfer (exit 23); some files were not transferred, see rsync output")
     if result.returncode not in (0, RSYNC_PARTIAL):
         raise OperationError(f"rsync failed ({what}) with exit code {result.returncode}")
     return result.returncode
@@ -124,7 +126,7 @@ def run_fetch(args, ctx: Context) -> int:
             ctx.print(f"fetch {pod.get('name')}:{remote_dir} -> {local_dir}")
             argv = rsync_pull(ep, ssh.key, remote_dir, local_dir, sync.fetch_excludes.get(name, []),
                               user=ssh.user, max_size=None, dry_run=args.dry_run)
-            if _rsync(ctx, argv, f"fetch {name}") == RSYNC_PARTIAL:
+            if _rsync(ctx, argv, f"fetch {name}", allow_partial=True) == RSYNC_PARTIAL:
                 ctx.print(f"  {name}/ missing or partial on {pod.get('name')}; skipped")
     ctx.print(f"fetched from {len(pods)} pod(s)" + (" (dry run)" if args.dry_run else ""))
     return 0

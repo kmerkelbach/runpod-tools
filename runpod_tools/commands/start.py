@@ -90,6 +90,8 @@ def build_payload(cfg: PodDefaults, args) -> dict:
     if volume_gb and volume_gb > 0:
         payload["volumeInGb"] = volume_gb
         payload["volumeMountPath"] = "/workspace"
+    elif args.volume_gb == 0:
+        payload["volumeInGb"] = 0  # explicit: no pod volume. Config 0 means "template/API default".
     network_volume = args.network_volume_id or cfg.network_volume_id
     if network_volume:
         payload["networkVolumeId"] = network_volume
@@ -121,7 +123,8 @@ def register(sub) -> None:
     p.add_argument("--gpu-count", type=int, help="number of GPUs (default: config)")
     p.add_argument("--cloud-type", choices=["SECURE", "COMMUNITY", "ALL"], help="(default: config)")
     p.add_argument("--container-disk-gb", type=int, help="(default: config)")
-    p.add_argument("--volume-gb", type=int, help="pod volume at /workspace; 0 disables (default: config)")
+    p.add_argument("--volume-gb", type=int,
+                   help="pod volume at /workspace. An explicit 0 asks for no volume; config 0 leaves the template/API default")
     p.add_argument("--network-volume-id", help="attach an existing network volume (default: config)")
     p.add_argument("--env", action="append", metavar="KEY=VALUE", help="extra env var; repeatable")
     p.add_argument("--docker-start-cmd", metavar="CMD", help="container start command override (REST dockerStartCmd)")

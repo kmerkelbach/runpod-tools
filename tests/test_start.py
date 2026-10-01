@@ -252,3 +252,15 @@ def test_docker_start_cmd_is_sent_as_list():
     p = build_payload(cfg, args(docker_start_cmd="bash -c 'sleep infinity'"))
     assert p["dockerStartCmd"] == ["bash", "-c", "sleep infinity"]
     assert "dockerArgs" not in p
+
+
+def test_explicit_volume_gb_zero_is_sent():
+    cfg = PodDefaults(template_id="tpl", volume_gb=100)
+    p = build_payload(cfg, args(volume_gb=0))
+    assert p["volumeInGb"] == 0 and "volumeMountPath" not in p
+
+
+def test_config_volume_gb_zero_sends_nothing():
+    cfg = PodDefaults(template_id="tpl", volume_gb=0)
+    p = build_payload(cfg, args())
+    assert "volumeInGb" not in p

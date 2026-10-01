@@ -48,7 +48,8 @@ def register(sub) -> None:
     ts = t.add_subparsers(dest="template_command", metavar="<subcommand>")
     ts.required = True
 
-    show = ts.add_parser("show", help="print a template (literal secrets redacted); all templates if none configured")
+    show = ts.add_parser("show", help="print a template (literal secrets redacted); all templates if none configured. "
+                         "--json always prints a list")
     show.add_argument("--template-id", help="(default: [pod].template_id)")
     add_json_flag(show)
     show.set_defaults(func=run_show)
@@ -112,7 +113,7 @@ def run_show(args, ctx: Context) -> int:
     else:
         templates = client.list_templates()
     if args.json:
-        ctx.print_json([_redacted(t) for t in templates] if len(templates) != 1 else _redacted(templates[0]))
+        ctx.print_json([_redacted(t) for t in templates])  # always a list, whatever matched
         return 0
     if len(templates) == 1:
         _print_template(ctx, templates[0])
@@ -195,6 +196,10 @@ def _save_input(template: dict, **changes) -> dict:
     }
     if template.get("volumeMountPath"):
         inp["volumeMountPath"] = template["volumeMountPath"]
+    # Fields saveTemplate would otherwise reset (registry credentials, visibility, readme, start flags).
+    for key in ("containerRegistryAuthId", "readme", "isPublic", "isServerless", "startSsh", "startJupyter"):
+        if template.get(key) is not None:
+            inp[key] = template[key]
     inp.update(changes)
     return inp
 

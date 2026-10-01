@@ -19,7 +19,8 @@ def ssh_endpoint(pod: dict) -> SshEndpoint | None:
     """The public ``ip:port`` mapped to the pod's 22/tcp, if the host exposes one."""
     runtime = pod.get("runtime") or {}
     for port in runtime.get("ports") or []:
-        if isinstance(port, dict) and port.get("privatePort") == 22 and port.get("ip") and port.get("publicPort"):
+        if (isinstance(port, dict) and port.get("privatePort") == 22 and port.get("ip") and port.get("publicPort")
+                and port.get("isIpPublic") is not False):
             return SshEndpoint(str(port["ip"]), int(port["publicPort"]))
     return None
 

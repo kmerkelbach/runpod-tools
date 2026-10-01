@@ -62,7 +62,7 @@ def test_show_json_is_redacted_too(capsys):
     t = FakeTransport().queue(*templates(TPL))
     assert run(["template", "show", "--json"], t, config=cfg()) == 0
     data = json.loads(capsys.readouterr().out)
-    assert data["env"]["OTHER_API_KEY"] == "<literal, 20 chars>"
+    assert data[0]["env"]["OTHER_API_KEY"] == "<literal, 20 chars>"
 
 
 def test_show_lists_all_when_no_template_configured(capsys):
@@ -176,3 +176,39 @@ def test_volume_same_size_is_a_noop():
 def test_template_commands_need_a_template_id(capsys):
     assert run(["template", "ports", "--add", "1/tcp", "-y"], FakeTransport(), config=cfg(template_id="")) == 2
     assert "--template-id" in capsys.readouterr().err
+
+
+FULL = {**TPL, "containerRegistryAuthId": "reg1", "readme": "# hi", "isPublic": False,
+        "startSsh": True, "startJupyter": False, "isServerless": False}
+
+
+def test_show_json_is_always_a_list(capsys):
+    t = FakeTransport().queue(*templates(TPL))
+    assert run(["template", "show", "--json"], t, config=cfg()) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert isinstance(data, list) and data[0]["id"] == "tpl1"
+
+
+def test_save_template_round_trips_extra_fields():
+    t = FakeTransport().queue(*templates(FULL)).queue(*graphql_ok({"saveTemplate": {"id": "tpl1", "volumeInGb": 5}}))
+    assert run(["template", "volume", "--gb", "5", "-y"], t, config=cfg()) == 0
+    inp = t.last.body["variables"]["input"]
+    assert inp["containerRegistryAuthId"] == "reg1"
+    assert inp["readme"] == "# hi"
+    assert inp["isPublic"] is False and inp["startSsh"] is True and inp["startJupyter"] is False
+    assert inp["isServerless"] is False
+
+
+def test_save_template_omits_extra_fields_when_absent():
+    t = FakeTransport().queue(*templates(TPL)).queue(*graphql_ok({"saveTemplate": {"id": "tpl1", "volumeInGb": 5}}))
+    assert run(["template", "volume", "--gb", "5", "-y"], t, config=cfg()) == 0
+    inp = t.last.body["variables"]["input"]
+    assert "containerRegistryAuthId" not in inp and "readme" not in inp
+
+
+def test_template_read_query_requests_extra_fields():
+    t = FakeTransport().queue(*templates(FULL))
+    assert run(["template", "show", "--json"], t, config=cfg()) == 0
+    q = t.calls[0].body["query"]
+    for field in ("containerRegistryAuthId", "readme", "isPublic", "startSsh", "startJupyter", "isServerless"):
+        assert field in q

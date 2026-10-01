@@ -47,6 +47,8 @@ def run_ssh(args, ctx: Context) -> int:
     if args.print:
         ctx.print(ssh_command_string(ep, cfg.key, cfg.user))
         return 0
+    if not ctx.isatty:
+        raise UsageError("stdin is not a terminal; use `rpt ssh --print` for the command or `rpt run -- <cmd>` to execute")
     argv = ["ssh", "-p", str(ep.port), "-i", str(cfg.key), "-o", "StrictHostKeyChecking=accept-new",
             ssh_target(ep, cfg.user)]
     ctx.execvp("ssh", argv)

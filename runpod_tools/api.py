@@ -156,6 +156,7 @@ class RunpodClient:
       myself {
         podTemplates {
           id name imageName ports containerDiskInGb volumeInGb volumeMountPath dockerArgs
+          containerRegistryAuthId readme isPublic isServerless startSsh startJupyter
           env { key value }
         }
       }

@@ -22,6 +22,7 @@ gpu_count = 1
 cloud_type = "SECURE"
 container_disk_gb = 50
 # > 0 attaches a per-pod volume at /workspace (survives stop/resume; dies with terminate).
+# 0 here means "leave the template/API default"; `rpt start --volume-gb 0` asks for no volume explicitly.
 volume_gb = 0
 # Attach an existing network volume instead (`rpt volumes`). Mounted at /workspace.
 network_volume_id = ""

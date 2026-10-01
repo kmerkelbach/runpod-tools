@@ -55,12 +55,12 @@ carrying the prefix; an explicit `--pod <id>` can still reach any pod.
 | `rpt resume [--pod\|--all] [--gpu-count N] [-y]` | Resume stopped pod(s). Can fail if the host is out of GPUs: then `terminate` + `start`. |
 | `rpt terminate [--pod\|--all] [-y]` | Delete pod(s) and their disks. Fetch first. Network volumes are untouched. |
 | `rpt wait [--pod ID] [--timeout S]` | Block until the pod exposes 22/tcp and sshd answers; prints `<ip> <port>`. |
-| `rpt ssh [--pod ID] [--print]` | Interactive shell, or print the `ssh` command. |
+| `rpt ssh [--pod ID] [--print]` | Interactive shell (terminal only; off a TTY it exits 2 and points to `--print` or `rpt run`), or print the `ssh` command. |
 | `rpt run [--pod\|--all] [--raw] [--background NAME] -- CMD...` | Run a command over ssh with the pod's injected secrets sourced (`/etc/rp_environment`). Exit code is the remote one (so a remote 2 is not an `rpt` usage error, and 255 means ssh itself failed). `--background` detaches under `nohup` with the log at `/workspace/rpt/NAME.log`. With `--all`, a pod without an endpoint is skipped and reported. |
-| `rpt push [--pod\|--all] [--delete] [-n]` | rsync `[sync].local_root` to the pod(s) with `push_excludes`. `--delete` is opt-in and announced. |
+| `rpt push [--pod\|--all] [--delete] [-n]` | rsync `[sync].local_root` to the pod(s) with `push_excludes`. `--delete` is opt-in and announced. A partial transfer (rsync exit 23) is a failure for push and pull; only `fetch` skips a missing remote dir. |
 | `rpt pull [--pod ID] [--allow-dirty] [-n]` | rsync the remote tree back. Never deletes, size-capped, refuses a dirty git checkout. |
 | `rpt fetch [--pod\|--all] [--dir D]... [-n]` | Download each `fetch_dirs` entry (results, logs, ...) with per-dir excludes. A dir missing on the pod is skipped. |
-| `rpt template show [--template-id T] [--json]` | Print a template with secret placeholders intact and literal secrets redacted. No id configured: list all. |
+| `rpt template show [--template-id T] [--json]` | Print a template with secret placeholders intact and literal secrets redacted. No id configured: list all. `--json` is always a list. |
 | `rpt template env --secret-ref ENV[=Secret] / --env K=V / --image IMG [--dry-run] [-y]` | Add or change env vars and/or the image. Read via GraphQL, PATCH via REST, so placeholders are preserved. |
 | `rpt template ports --add 22/tcp \| --set LIST [-y]` | Expose ports on the template (22/tcp is what makes ssh/rsync possible). |
 | `rpt template volume --gb N [-y]` | Set the template's default pod volume size. |

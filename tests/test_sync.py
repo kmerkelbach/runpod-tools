@@ -174,3 +174,17 @@ def test_sync_no_endpoint_exits_1(tmp_path, capsys):
     t = FakeTransport().queue(*listing(pod(id="p1", runtime=None)))
     assert run(["push"], t, config=cfg(tmp_path), runner=Recorder()) == 1
     assert "no TCP endpoint" in capsys.readouterr().err
+
+
+def test_push_partial_transfer_exit_23_is_a_failure(tmp_path, capsys):
+    rec = Recorder(codes=[23])
+    t = FakeTransport().queue(*listing(READY))
+    assert run(["push"], t, config=cfg(tmp_path), runner=rec) == 1
+    assert "partial" in capsys.readouterr().err
+
+
+def test_pull_partial_transfer_exit_23_is_a_failure(tmp_path, capsys):
+    rec = Recorder(codes=[23])
+    t = FakeTransport().queue(*listing(READY))
+    assert run(["pull"], t, config=cfg(tmp_path), runner=rec) == 1
+    assert "partial" in capsys.readouterr().err
