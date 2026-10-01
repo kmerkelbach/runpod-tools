@@ -25,6 +25,7 @@ from typing import Any
 
 REST_BASE = "https://rest.runpod.io/v1"
 GRAPHQL_URL = "https://api.runpod.io/graphql"
+USER_AGENT = "runpod-tools/0.1"
 API_KEY_HELP = "Set RUNPOD_API_KEY (create one at https://www.runpod.io/console/user/settings)."
 
 Transport = Callable[[str, str, dict[str, str], bytes | None], tuple[int, bytes]]
@@ -59,7 +60,13 @@ class RunpodClient:
     # -- low level -----------------------------------------------------------
 
     def _headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"}
+        # Cloudflare in front of both APIs rejects urllib's default User-Agent
+        # ("Python-urllib/3.x") with 403 "error code: 1010".
+        return {
+            "Authorization": f"Bearer {self._key}",
+            "Content-Type": "application/json",
+            "User-Agent": USER_AGENT,
+        }
 
     def rest(self, method: str, path: str, body: Mapping[str, Any] | None = None) -> Any:
         raw = json.dumps(body).encode() if body is not None else None

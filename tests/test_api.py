@@ -16,6 +16,7 @@ def test_rest_sends_bearer_and_json():
     assert call.url == REST_BASE + "/pods"
     assert call.headers["Authorization"] == "Bearer sekret"
     assert call.headers["Content-Type"] == "application/json"
+    assert call.headers["User-Agent"].startswith("runpod-tools/")
     assert call.body == {"name": "x"}
 
 
