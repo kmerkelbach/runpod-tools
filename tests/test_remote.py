@@ -1,5 +1,6 @@
 """rpt wait / ssh / run."""
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -99,7 +100,7 @@ def test_run_background_wraps_with_nohup_and_log():
     assert run(["run", "--background", "job1", "--", "python", "train.py", "--x", "1"], t, config=cfg(), runner=rec) == 0
     remote = rec.calls[0][0][-1]
     assert "mkdir -p /workspace/rpt" in remote
-    assert "nohup bash -c 'python train.py --x 1' > /workspace/rpt/job1.log 2>&1 &" in remote
+    assert "nohup bash -c 'python train.py --x 1' > /workspace/rpt/job1.log 2>&1 < /dev/null &" in remote
     assert "echo pid=$!" in remote
 
 
@@ -117,6 +118,28 @@ def test_run_background_wrapper_survives_a_real_shell(tmp_path, monkeypatch):
             break
         time.sleep(0.05)
     assert (tmp_path / "j.log").read_text().strip() == "it's a \"test\" 2"
+
+
+def test_run_background_wrapper_releases_the_session_streams(tmp_path, monkeypatch):
+    """sshd keeps a session open while anything holds its stdout; the detached job must not."""
+    from runpod_tools.commands.ssh import background_wrapper
+
+    monkeypatch.setattr("runpod_tools.commands.ssh.BACKGROUND_DIR", str(tmp_path))
+    wrapper = background_wrapper("sleep 20", "j")
+    # With a pipe for stdout, run() returns only once every holder has closed it.
+    out = subprocess.run(["bash", "-c", wrapper], capture_output=True, text=True, check=True, timeout=5).stdout
+    pid = int(out.strip().removeprefix("pid="))
+    os.kill(pid, 15)
+
+
+def test_run_background_wrapper_does_not_launch_without_its_log_directory(tmp_path, monkeypatch):
+    from runpod_tools.commands.ssh import background_wrapper
+
+    blocker = tmp_path / "file"
+    blocker.write_text("")
+    monkeypatch.setattr("runpod_tools.commands.ssh.BACKGROUND_DIR", str(blocker / "sub"))
+    result = subprocess.run(["bash", "-c", background_wrapper("echo hi", "j")], capture_output=True, text=True, timeout=5)
+    assert result.returncode != 0 and "pid=" not in result.stdout
 
 
 def test_run_all_iterates_pods_and_reports_worst_exit(capsys):

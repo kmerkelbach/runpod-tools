@@ -56,8 +56,11 @@ def run_ssh(args, ctx: Context) -> int:
 
 
 def background_wrapper(command: str, name: str) -> str:
-    return (f"mkdir -p {BACKGROUND_DIR} && nohup bash -c {shlex.quote(command)} "
-            f"> {BACKGROUND_DIR}/{name}.log 2>&1 & echo pid=$!")
+    # Only the job is backgrounded, with all three streams redirected. Without the
+    # braces `mkdir && nohup ... &` backgrounds the whole list in a subshell that
+    # keeps the session's stdout, and sshd holds the session open until it exits.
+    return (f"mkdir -p {BACKGROUND_DIR} && {{ nohup bash -c {shlex.quote(command)} "
+            f"> {BACKGROUND_DIR}/{name}.log 2>&1 < /dev/null & echo pid=$!; }}")
 
 
 def run_run(args, ctx: Context) -> int:
