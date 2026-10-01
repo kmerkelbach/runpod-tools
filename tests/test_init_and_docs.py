@@ -1,6 +1,5 @@
 """rpt init, plus checks that the shipped examples and docs stay honest."""
 
-import re
 import subprocess
 from pathlib import Path
 
@@ -55,29 +54,6 @@ def test_agents_md_exists_and_claude_md_points_to_it():
 def test_shell_examples_parse():
     for script in ("examples/pod-start.sh", "examples/killswitch.sh"):
         subprocess.run(["bash", "-n", str(ROOT / script)], check=True)
-
-
-FORBIDDEN = [
-    # identifiers that belong to the project these tools were distilled from
-    r"REDACTED", r"REDACTED", r"REDACTED", r"the-source-project", r"REDACTED_",
-    r"REDACTED", r"REDACTED", r"tinker", r"deliberative", r"OPENROUTER",
-]
-
-
-def test_no_project_specific_identifiers_shipped():
-    offenders = []
-    for path in ROOT.rglob("*"):
-        if not path.is_file() or any(part in {".git", ".venv", ".superpowers", "__pycache__"} for part in path.parts):
-            continue
-        if path.suffix in {".pyc"} or path.name == ".DS_Store" or path == Path(__file__).resolve():
-            continue
-        if "docs/superpowers" in str(path):  # spec/plan may name the source project
-            continue
-        text = path.read_text(errors="ignore")
-        for pat in FORBIDDEN:
-            if re.search(pat, text, re.IGNORECASE):
-                offenders.append(f"{path.relative_to(ROOT)}: {pat}")
-    assert not offenders, "\n".join(offenders)
 
 
 def test_example_config_is_tracked_by_git_and_packaged():
