@@ -74,6 +74,9 @@ def build_payload(cfg: PodDefaults, args) -> dict:
         "containerDiskInGb": args.container_disk_gb or cfg.container_disk_gb,
         "supportPublicIp": not args.no_public_ip and cfg.support_public_ip,
     }
+    cuda_versions = args.cuda_version or cfg.allowed_cuda_versions
+    if cuda_versions:
+        payload["allowedCudaVersions"] = list(cuda_versions)
     if template_id:
         payload["templateId"] = template_id
         if image and not args.image_override:
@@ -131,6 +134,8 @@ def register(sub) -> None:
     p.add_argument("--ports", help="comma-separated ports, e.g. 22/tcp,8888/http (default: config)")
     p.add_argument("--no-public-ip", action="store_true",
                    help="drop the public-IP scheduling constraint (pod may get no SSH/rsync endpoint)")
+    p.add_argument("--cuda-version", action="append", metavar="VERSION",
+                   help="only hosts whose driver supports this CUDA version, e.g. 13.0; repeatable (default: config)")
     p.add_argument("--delay", help="wait before creating, e.g. 2h or 30m (Ctrl-C cancels)")
     p.add_argument("--retry", type=int, metavar="SECONDS", help="retry interval when no capacity is available")
     p.add_argument("--max-retries", type=int, default=10, help="attempts before giving up (default 10)")

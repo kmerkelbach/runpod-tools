@@ -32,6 +32,10 @@ name_prefix = ""
 # Only schedule onto hosts that can expose a public TCP port. Without this a
 # Secure Cloud pod may land on a proxy-only host with no ssh/rsync endpoint.
 support_public_ip = true
+# Only schedule onto hosts whose driver supports one of these CUDA versions,
+# e.g. ["13.0"]. Host drivers are mixed: an image with CUDA 13 wheels cannot use
+# the GPU on a host whose driver stops at 12.8. Empty means any host.
+allowed_cuda_versions = []
 # Ports to expose when creating without a template (a template carries its own).
 ports = ""
 

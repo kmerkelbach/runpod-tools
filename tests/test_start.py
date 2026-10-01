@@ -53,7 +53,7 @@ def args(**over):
     base = dict(
         name="n", template_id=None, image=None, image_override=False, gpu_type=None, gpu_count=None,
         cloud_type=None, container_disk_gb=None, volume_gb=None, network_volume_id=None, env=None,
-        docker_start_cmd=None, ports=None, no_public_ip=False,
+        docker_start_cmd=None, ports=None, no_public_ip=False, cuda_version=None,
     )
     base.update(over)
     return SimpleNamespace(**base)
@@ -107,6 +107,21 @@ def test_payload_cli_overrides_config_and_optional_fields():
     assert p["dockerStartCmd"] == ["bash", "-c", "sleep"]
     assert p["ports"] == ["22/tcp", "8888/http"]
     assert p["supportPublicIp"] is False
+
+
+def test_payload_omits_the_cuda_filter_by_default():
+    assert "allowedCudaVersions" not in build_payload(PodDefaults(template_id="tpl"), args())
+
+
+def test_payload_cuda_filter_from_config():
+    cfg = PodDefaults(template_id="tpl", allowed_cuda_versions=["13.0"])
+    assert build_payload(cfg, args())["allowedCudaVersions"] == ["13.0"]
+
+
+def test_payload_cuda_filter_flag_replaces_config():
+    cfg = PodDefaults(template_id="tpl", allowed_cuda_versions=["13.0"])
+    p = build_payload(cfg, args(cuda_version=["12.8", "12.9"]))
+    assert p["allowedCudaVersions"] == ["12.8", "12.9"]
 
 
 # --- CLI ---------------------------------------------------------------------

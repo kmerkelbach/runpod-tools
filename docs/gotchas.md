@@ -13,6 +13,15 @@ work. `rpt start` sends `supportPublicIp: true` by default, which is a
 *scheduling constraint*: only place me where a public port can be exposed.
 `rpt pods` says "no TCP endpoint" when a pod has none.
 
+**Host GPU drivers are mixed, and an image's CUDA wheels may be newer than the
+host.** On one day the same account got hosts with driver 570 (CUDA 12.8) and
+580 (CUDA 13.0). PyTorch built for CUDA 13 reports `cuda.is_available() ==
+False` on the older driver ("The NVIDIA driver on your system is too old"), and
+nothing else looks wrong. `allowedCudaVersions` on pod create is a scheduling
+constraint like the public IP: `rpt start --cuda-version 13.0`, or
+`[pod].allowed_cuda_versions` in the config. Check the GPU from your own code
+right after start regardless.
+
 **Ports are discovered per call and change on restart.** Never cache an
 `ip:port`; ask `rpt pods` (or `rpt wait`) again after a resume.
 

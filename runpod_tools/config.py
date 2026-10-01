@@ -40,6 +40,7 @@ class PodDefaults:
     network_volume_id: str = ""
     name_prefix: str = ""
     support_public_ip: bool = True
+    allowed_cuda_versions: list[str] = field(default_factory=list)
     ports: str = ""
 
 
