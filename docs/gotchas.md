@@ -56,12 +56,18 @@ shells that do not inherit them, so `ssh pod 'python job.py'` sees no
 `rpt run` sources it before every command. A custom image must write the
 file itself (`examples/pod-start.sh`).
 
-**Pods do not have `RUNPOD_API_KEY` or `RUNPOD_POD_ID`** unless the template
-puts them there. A pod-side killswitch needs the key delivered separately:
-over stdin into a root-only file under `/workspace` (see
-`examples/killswitch.sh`), or as a template env var referencing a secret
-that holds it. Never on a command line: it would sit in `ps` output for the
-life of the process.
+**The pod's own `RUNPOD_API_KEY` cannot stop the pod.** Runpod injects
+`RUNPOD_POD_ID` and a `RUNPOD_API_KEY` into every pod, but that key is scoped
+to the pod: `POST /pods/{id}/stop` and `DELETE /pods/{id}` answer 403 with an
+empty body. The injected key also lands in `/etc/rp_environment`, so any
+script that falls back to `$RUNPOD_API_KEY` under `rpt run` or a login shell
+picks up the wrong key. A pod-side killswitch needs the account key delivered
+separately: over stdin into a root-only file under `/workspace` (see
+`examples/killswitch.sh`, which reads only that file or `KILLSWITCH_API_KEY`,
+never `RUNPOD_API_KEY`), or as a template env var under another name
+referencing a secret that holds it. Never on a command line: it would sit in
+`ps` output for the life of the process. One probe ran seven hours past its
+cap this way; the script now logs the HTTP status and retries.
 
 **The pod shell may be zsh.** Unquoted `$var` does not word-split there
 (`ssh $OPTS ...` passes one argument). Write options inline or use arrays,

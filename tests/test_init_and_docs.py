@@ -99,21 +99,73 @@ def test_pod_start_env_writer_round_trips_awkward_values(tmp_path):
     assert not (tmp_path / "should_not_run").exists()
 
 
-def test_killswitch_reads_key_from_file_and_calls_api(tmp_path):
+KILLSWITCH = ROOT / "examples/killswitch.sh"
+
+
+def fake_curl(tmp_path, status="200"):
+    """A curl stand-in that records its arguments and answers `-w '%{http_code}'`
+    with the given status."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    fake_curl = bindir / "curl"
-    fake_curl.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$CURL_LOG"\n')
-    fake_curl.chmod(0o755)
+    curl = bindir / "curl"
+    curl.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$CURL_LOG"\nprintf "%s" "$CURL_STATUS"\n')
+    curl.chmod(0o755)
     keyfile = tmp_path / ".rp_key"
     keyfile.write_text("file-key\n")
-    log = tmp_path / "curl.log"
-    subprocess.run(["bash", str(ROOT / "examples/killswitch.sh"), "podX", "0", "terminate"], check=True,
-                   capture_output=True,
-                   env={"PATH": f"{bindir}:/usr/bin:/bin", "CURL_LOG": str(log), "KILLSWITCH_KEY_FILE": str(keyfile)})
-    args = log.read_text().splitlines()
+    env = {
+        "PATH": f"{bindir}:/usr/bin:/bin",
+        "CURL_LOG": str(tmp_path / "curl.log"),
+        "CURL_STATUS": status,
+        "KILLSWITCH_KEY_FILE": str(keyfile),
+        "KILLSWITCH_RETRY_SECONDS": "0",
+        "KILLSWITCH_RETRIES": "2",
+    }
+    return env
+
+
+def run_killswitch(env, action="terminate"):
+    return subprocess.run(["bash", str(KILLSWITCH), "podX", "0", action], capture_output=True, text=True, env=env)
+
+
+def test_killswitch_reads_key_from_file_and_calls_api(tmp_path):
+    env = fake_curl(tmp_path)
+    result = run_killswitch(env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    args = Path(env["CURL_LOG"]).read_text().splitlines()
     assert "DELETE" in args and any(a.endswith("/pods/podX") for a in args)
     assert "Authorization: Bearer file-key" in args
+    assert "HTTP 200" in result.stdout and "[killswitch] done" in result.stdout
+
+
+def test_killswitch_ignores_the_pods_own_runpod_api_key(tmp_path):
+    # Runpod injects a pod-scoped RUNPOD_API_KEY that cannot stop the pod, and
+    # `rpt run` sources it; the delivered key must win over it.
+    env = fake_curl(tmp_path)
+    env["RUNPOD_API_KEY"] = "injected-pod-key"
+    result = run_killswitch(env, action="stop")
+    assert result.returncode == 0, result.stdout + result.stderr
+    args = Path(env["CURL_LOG"]).read_text().splitlines()
+    assert "POST" in args and any(a.endswith("/pods/podX/stop") for a in args)
+    assert "Authorization: Bearer file-key" in args
+    assert "injected-pod-key" not in Path(env["CURL_LOG"]).read_text()
+
+
+def test_killswitch_without_a_delivered_key_refuses_to_arm(tmp_path):
+    env = fake_curl(tmp_path)
+    env["KILLSWITCH_KEY_FILE"] = str(tmp_path / "missing")
+    env["RUNPOD_API_KEY"] = "injected-pod-key"
+    result = run_killswitch(env)
+    assert result.returncode != 0
+    assert "RUNPOD_API_KEY cannot stop the pod" in result.stderr
+    assert not Path(env["CURL_LOG"]).exists()
+
+
+def test_killswitch_retries_and_reports_a_failed_api_call(tmp_path):
+    env = fake_curl(tmp_path, status="403")
+    result = run_killswitch(env, action="stop")
+    assert result.returncode == 1
+    assert result.stdout.count("HTTP 403") == 2
+    assert "FAILED after 2 attempts" in result.stdout
 
 
 def test_docs_never_put_the_api_key_on_a_command_line():

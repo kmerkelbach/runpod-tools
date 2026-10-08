@@ -6,11 +6,15 @@
 # outside is not enforced. Missed wakeups, dropped ssh, a crashed laptop, and
 # the pod keeps billing. This runs ON the pod and needs nothing from outside.
 #
-# The key: pods do NOT have RUNPOD_API_KEY in their env unless the template
-# puts it there. This script takes it from $RUNPOD_API_KEY if set (e.g. via a
-# template secret ref), otherwise from a root-only file, default
-# /workspace/.rp_key (override with KILLSWITCH_KEY_FILE). Never put the key
-# on a command line: it would sit in `ps` output for hours.
+# The key: Runpod injects a RUNPOD_API_KEY into every pod, but it is scoped to
+# that pod and the REST API answers 403 when it is used to stop or terminate
+# the pod. Login shells and `rpt run` source it from /etc/rp_environment, so
+# this script never reads RUNPOD_API_KEY. The account key comes from a
+# root-only file, default /workspace/.rp_key (override with
+# KILLSWITCH_KEY_FILE), or from $KILLSWITCH_API_KEY if set (e.g. via a template
+# secret ref). Never put the key on a command line: it would sit in `ps`
+# output for hours. The key is read once at start, so the file may be deleted
+# as soon as the script is running.
 #
 # From your machine, with rpt (the key travels over stdin, not argv):
 #
@@ -24,26 +28,57 @@
 # and anything under /root vanishes. Re-arm after every resume. Before
 # launching a NEW run on the same pod, kill the old killswitch
 # (pgrep -f '[k]illswitch') or it will fire on the new run's timeline.
+#
+# The API call logs its HTTP status and is retried (KILLSWITCH_RETRIES times,
+# KILLSWITCH_RETRY_SECONDS apart) so a transient failure does not leave the
+# pod running; a cap that fails silently is no cap. Check the log
+# (/workspace/rpt/killswitch.log with rpt) if the pod is still up afterwards.
 set -u
 POD_ID="${1:?pod id required}"
 MAX_H="${2:?max hours required}"
 ACTION="${3:-stop}"
 KEY_FILE="${KILLSWITCH_KEY_FILE:-/workspace/.rp_key}"
-if [ -z "${RUNPOD_API_KEY:-}" ] && [ -r "$KEY_FILE" ]; then
-    RUNPOD_API_KEY="$(tr -d '\n' < "$KEY_FILE")"
+RETRIES="${KILLSWITCH_RETRIES:-5}"
+RETRY_SECONDS="${KILLSWITCH_RETRY_SECONDS:-60}"
+API_KEY="${KILLSWITCH_API_KEY:-}"
+if [ -z "$API_KEY" ] && [ -r "$KEY_FILE" ]; then
+    API_KEY="$(tr -d '\n' < "$KEY_FILE")"
 fi
-: "${RUNPOD_API_KEY:?no API key: set RUNPOD_API_KEY or write it to $KEY_FILE (mode 600)}"
+: "${API_KEY:?no API key: set KILLSWITCH_API_KEY or write the account key to $KEY_FILE (mode 600); the injected RUNPOD_API_KEY cannot stop the pod}"
 
 echo "[killswitch] armed: pod=$POD_ID cap=${MAX_H}h action=$ACTION start=$(date -u +%FT%TZ)"
 sleep "$(python3 -c "print(int(float('$MAX_H') * 3600))")"
 echo "[killswitch] CAP REACHED $(date -u +%FT%TZ) -> $ACTION $POD_ID"
 
-if [ "$ACTION" = "terminate" ]; then
-    curl -sS -X DELETE "https://rest.runpod.io/v1/pods/$POD_ID" \
-        -H "Authorization: Bearer $RUNPOD_API_KEY"
-else
-    curl -sS -X POST "https://rest.runpod.io/v1/pods/$POD_ID/stop" \
-        -H "Authorization: Bearer $RUNPOD_API_KEY"
-fi
-echo
-echo "[killswitch] done"
+BODY="$(mktemp)"
+trap 'rm -f "$BODY"' EXIT
+
+# Fire the API call once; print the status and the start of the body.
+fire() {
+    local code
+    if [ "$ACTION" = "terminate" ]; then
+        code=$(curl -sS -o "$BODY" -w '%{http_code}' -X DELETE \
+            "https://rest.runpod.io/v1/pods/$POD_ID" \
+            -H "Authorization: Bearer $API_KEY")
+    else
+        code=$(curl -sS -o "$BODY" -w '%{http_code}' -X POST \
+            "https://rest.runpod.io/v1/pods/$POD_ID/stop" \
+            -H "Authorization: Bearer $API_KEY")
+    fi
+    echo "[killswitch] HTTP ${code:-none} $(head -c 200 "$BODY" | tr -d '\n')"
+    case "$code" in 2??) return 0 ;; *) return 1 ;; esac
+}
+
+attempt=1
+while :; do
+    if fire; then
+        echo "[killswitch] done"
+        exit 0
+    fi
+    if [ "$attempt" -ge "$RETRIES" ]; then
+        echo "[killswitch] FAILED after $attempt attempts; the pod is still billing"
+        exit 1
+    fi
+    attempt=$((attempt + 1))
+    sleep "$RETRY_SECONDS"
+done
