@@ -321,3 +321,23 @@ def test_v2_caches_are_separate_from_v1(tmp_path):
 
     env = {"RUNPOD_API_KEY": "k", "RPT_CACHE_DIR": str(tmp_path)}
     assert client_v2_from_env(env).pod_cache.path != client_from_env(env).pod_cache.path
+
+
+def test_other_ports_are_public_unless_the_ip_is_private():
+    p = v2_pod(runtime={"uptime": 1, "ports": [
+        {"private": 22, "public": 40022, "type": "tcp", "ip": "1.2.3.4"},
+        {"private": 8000, "public": 40100, "type": "tcp", "ip": "1.2.3.4"},
+        {"private": 8888, "public": None, "type": "http", "ip": "10.0.0.5"},
+    ]})
+    ports = {e["privatePort"]: e for e in legacy_pod(p, {})["runtime"]["ports"]}
+    assert ports[8000]["isIpPublic"] is True and ports[8000]["publicPort"] == 40100
+    assert ports[8888]["isIpPublic"] is False
+    assert ports[22] == {"ip": "1.2.3.4", "isIpPublic": True, "privatePort": 22, "publicPort": 40022, "type": "tcp"}
+
+
+def test_selected_client_follows_rpt_api(tmp_path):
+    from runpod_tools.api_v2 import selected_client_from_env
+
+    env = {"RUNPOD_API_KEY": "k", "RPT_CACHE_DIR": str(tmp_path)}
+    assert not isinstance(selected_client_from_env(env), RestV2Client)
+    assert isinstance(selected_client_from_env({**env, "RPT_API": "v2"}), RestV2Client)

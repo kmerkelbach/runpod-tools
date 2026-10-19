@@ -21,6 +21,7 @@ Differences that cannot be hidden:
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -172,9 +173,17 @@ class RestV2Client(RunpodClient):
 # -- translation ---------------------------------------------------------------
 
 
+def _is_public(ip: Any) -> bool | None:
+    try:
+        return not ipaddress.ip_address(str(ip)).is_private
+    except ValueError:
+        return None
+
+
 def legacy_ports(pod: dict) -> list[dict]:
-    """GraphQL-shaped runtime ports. 22/tcp is public only when v2 reports a
-    direct ssh endpoint; every other entry keeps v2's ip and public port."""
+    """GraphQL-shaped runtime ports. v2 has no ``isIpPublic``: 22/tcp is public
+    only when v2 reports a direct ssh endpoint, and any other port is public
+    when its IP is not a private address."""
     runtime = pod.get("runtime") or {}
     direct = (pod.get("ssh") or {}).get("direct") or None
     ports = []
@@ -183,8 +192,9 @@ def legacy_ports(pod: dict) -> list[dict]:
             continue
         if port.get("private") == 22 and port.get("type") == "tcp":
             continue
-        ports.append({"ip": port.get("ip"), "isIpPublic": None, "privatePort": port.get("private"),
-                      "publicPort": port.get("public"), "type": port.get("type")})
+        ports.append({"ip": port.get("ip"), "isIpPublic": _is_public(port.get("ip")) if port.get("ip") else None,
+                      "privatePort": port.get("private"), "publicPort": port.get("public"),
+                      "type": port.get("type")})
     if direct and direct.get("host") and direct.get("port"):
         ports.insert(0, {"ip": direct["host"], "isIpPublic": True, "privatePort": 22,
                          "publicPort": int(direct["port"]), "type": "tcp"})
@@ -316,3 +326,14 @@ def client_v2_from_env(env: Mapping[str, str] | None = None, transport=None) -> 
     return RestV2Client(key, transport=transport, rate_limit_wait=rate_limit_wait_from_env(env),
                         pod_cache=pods, usage_log=usage_log_from_env(key, env),
                         backoff=backoff_from_env(key, env), catalog_cache=catalog)
+
+
+def selected_client_from_env(env: Mapping[str, str] | None = None, transport=None) -> RunpodClient:
+    """The client ``rpt`` uses: REST v2 when ``RPT_API=v2``, else v1/GraphQL.
+    For code that imports runpod_tools instead of running rpt."""
+    from runpod_tools.api import client_from_env
+
+    env = os.environ if env is None else env
+    if env.get("RPT_API", "").strip().lower() == "v2":
+        return client_v2_from_env(env, transport)
+    return client_from_env(env, transport)
