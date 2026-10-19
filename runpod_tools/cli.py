@@ -32,8 +32,8 @@ SUBCOMMANDS: list[str] = [
 ]
 
 
-# RPT_API=v2 makes `rpt` use REST API v2 (`rpt2` always does). REST v1 stops
-# serving on 2026-11-15 and GraphQL is retired in early 2027.
+# `rpt` uses REST API v2; RPT_API=v1 goes back to REST v1 + GraphQL until
+# those stop (REST v1 on 2026-11-15, GraphQL in early 2027). `rpt2` is always v2.
 API_ENV = "RPT_API"
 
 
@@ -183,7 +183,7 @@ def main(
     parser = build_parser()
     args = parser.parse_args(argv)
     env = os.environ if env is None else env
-    if client_factory is client_from_env and env.get(API_ENV, "").strip().lower() == "v2":
+    if client_factory is client_from_env and env.get(API_ENV, "").strip().lower() != "v1":
         from runpod_tools.api_v2 import client_v2_from_env
 
         client_factory = client_v2_from_env

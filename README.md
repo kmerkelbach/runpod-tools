@@ -35,8 +35,13 @@ what never to do). Operational lessons are in [docs/gotchas.md](docs/gotchas.md)
 
    Per-shell overrides: `RUNPOD_TEMPLATE_ID`, `RUNPOD_POD_NAME_PREFIX`,
    `RUNPOD_SSH_KEY`.
-4. **Rate limits** (Runpod: 180 requests/minute per account, both APIs
-   together). `rpt` retries a 429 with jittered exponential backoff for up to
+4. **API version.** `rpt` talks to Runpod's REST API v2
+   (`https://api.runpod.io/v2`). `RPT_API=v1` goes back to REST v1 + GraphQL,
+   which Runpod retires (REST v1 on 2026-11-15, GraphQL in early 2027); `rpt2`
+   is always v2. Output is the same either way; the differences that cannot be
+   hidden are listed in `runpod_tools/api_v2.py` and `docs/rest-v2-notes.md`.
+5. **Rate limits** (Runpod, per account: REST v2 180/min, 7,200/h, 86,400/day;
+   GraphQL 180/min, 3,600/h, 43,200/day). `rpt` retries a 429 with jittered exponential backoff for up to
    `RPT_RATE_LIMIT_WAIT` seconds (default 90, `0` disables), then exits 1.
    `run`, `ssh`, `push`, `pull` and `fetch` read a pod listing shared by all
    `rpt` processes of the account (`RPT_POD_CACHE_TTL`, default 30 s, `0`

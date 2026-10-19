@@ -1,5 +1,10 @@
 # Runpod API notes
 
+> Since 2026-10-20 `rpt` uses REST API v2 by default (`docs/rest-v2-notes.md`,
+> `runpod_tools/api_v2.py`). This page describes REST v1 + GraphQL, still
+> used with `RPT_API=v1` until Runpod retires them (REST v1 on 2026-11-15,
+> GraphQL in early 2027).
+
 Runpod exposes two APIs. `rpt` uses both because neither covers everything,
 and each has a trap the other does not.
 

@@ -481,3 +481,22 @@ Docs: https://docs.runpod.io/api-reference-v2/network-volumes/list-network-volum
 9. **`costPerHr` vs `cost` when stopped**: v2 reports 0.0 for EXITED pods;
    any stopped-pod storage cost must come from `/v2/billing/pods`.
 10. Capacity errors are 400 with free-text `detail` only; no machine code.
+
+
+## Verified live (2026-10-19/20)
+
+- v2 has its own quota, separate from GraphQL: `ratelimit-policy: "minute";q=180;w=60,
+  "hour";q=7200;w=3600, "day";q=86400;w=86400`. v2 answered while the GraphQL hourly
+  bucket was empty. Headers: `ratelimit: "minute";r=..;t=.., "hour";..`.
+- `GET /v2/templates/{id}` returns `{{ RUNPOD_SECRET_* }}` placeholders verbatim.
+- `gpu.allowedCudaVersions` is an exact match: `["13.0"]` found no host while every
+  available one reported 13.2. `rpt` sends `minCudaVersion` instead.
+- `rpt2 pods --json` matched GraphQL-backed `rpt pods --json` on 31 live pods, every
+  field (uptime and cost-so-far aside, which move between calls).
+- Fleet end to end through rpt2: start with GPU fallback, wait, push, pod-setup,
+  deliver, killswitch (fired a v2 stop on time), launch, watch, fetch, stop, resume,
+  terminate. A resume answered 400 (host without a free GPU, as v1 can); a repeat
+  on another pod resumed twice.
+- Capacity refusals: 400 `Bad Request: There are no longer any instances available
+  with the requested specifications.`; `rpt start --retry` treats it as retryable.
+- A stopped pod's `cost` was 0.59 (the rate), not 0.0 as the docs say.

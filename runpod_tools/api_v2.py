@@ -339,11 +339,11 @@ def client_v2_from_env(env: Mapping[str, str] | None = None, transport=None) -> 
 
 
 def selected_client_from_env(env: Mapping[str, str] | None = None, transport=None) -> RunpodClient:
-    """The client ``rpt`` uses: REST v2 when ``RPT_API=v2``, else v1/GraphQL.
+    """The client ``rpt`` uses: REST v2, or v1/GraphQL when ``RPT_API=v1``.
     For code that imports runpod_tools instead of running rpt."""
     from runpod_tools.api import client_from_env
 
     env = os.environ if env is None else env
-    if env.get("RPT_API", "").strip().lower() == "v2":
-        return client_v2_from_env(env, transport)
-    return client_from_env(env, transport)
+    if env.get("RPT_API", "").strip().lower() == "v1":
+        return client_from_env(env, transport)
+    return client_v2_from_env(env, transport)

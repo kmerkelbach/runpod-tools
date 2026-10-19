@@ -303,7 +303,7 @@ def test_template_translation_keeps_placeholders():
     assert legacy_template(V2_TEMPLATE)["ports"] == "22/tcp,8888/http"
 
 
-def test_rpt2_and_rpt_api_env_select_v2(monkeypatch, tmp_path):
+def test_rpt_uses_v2_by_default(monkeypatch, tmp_path):
     seen = []
 
     def fake_v2(env=None, transport=None):
@@ -311,9 +311,23 @@ def test_rpt2_and_rpt_api_env_select_v2(monkeypatch, tmp_path):
         return v2(FakeTransport().queue(200, CATALOG).queue(*v2_listing()))
 
     monkeypatch.setattr("runpod_tools.api_v2.client_v2_from_env", fake_v2)
-    assert main(["pods"], config_loader=Config, stdin_isatty=lambda: False,
-                env={"RUNPOD_API_KEY": "k", "RPT_API": "v2"}) == 0
+    assert main(["pods"], config_loader=Config, stdin_isatty=lambda: False, env={"RUNPOD_API_KEY": "k"}) == 0
     assert seen == ["v2"]
+
+
+def test_rpt_api_v1_goes_back_to_graphql(monkeypatch):
+    seen = []
+
+    def fake_v1(env=None, transport=None):
+        seen.append("v1")
+        return v1(FakeTransport().queue(*graphql_ok({"myself": {"pods": []}})))
+
+    monkeypatch.setattr("runpod_tools.cli.client_from_env", fake_v1)
+    from runpod_tools import cli
+
+    assert main(["pods"], client_factory=cli.client_from_env, config_loader=Config, stdin_isatty=lambda: False,
+                env={"RUNPOD_API_KEY": "k", "RPT_API": "v1"}) == 0
+    assert seen == ["v1"]
 
 
 def test_v2_caches_are_separate_from_v1(tmp_path):
@@ -339,8 +353,8 @@ def test_selected_client_follows_rpt_api(tmp_path):
     from runpod_tools.api_v2 import selected_client_from_env
 
     env = {"RUNPOD_API_KEY": "k", "RPT_CACHE_DIR": str(tmp_path)}
-    assert not isinstance(selected_client_from_env(env), RestV2Client)
-    assert isinstance(selected_client_from_env({**env, "RPT_API": "v2"}), RestV2Client)
+    assert isinstance(selected_client_from_env(env), RestV2Client)
+    assert not isinstance(selected_client_from_env({**env, "RPT_API": "v1"}), RestV2Client)
 
 
 def test_cuda_floor_is_the_lowest_allowed_version():
