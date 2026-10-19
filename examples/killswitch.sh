@@ -1,6 +1,7 @@
 #!/bin/bash
 # Pod-side hard cap: sleep MAX_HOURS, then stop or terminate THIS pod via the
-# Runpod REST API — no matter what the driving session is doing.
+# Runpod REST API (v2, falling back to v1) — no matter what the driving
+# session is doing.
 #
 # Why: a cost cap enforced only by an operator (or an agent) polling from
 # outside is not enforced. Missed wakeups, dropped ssh, a crashed laptop, and
@@ -53,10 +54,22 @@ echo "[killswitch] CAP REACHED $(date -u +%FT%TZ) -> $ACTION $POD_ID"
 BODY="$(mktemp)"
 trap 'rm -f "$BODY"' EXIT
 
-# Fire the API call once; print the status and the start of the body.
-fire() {
-    local code
-    if [ "$ACTION" = "terminate" ]; then
+# Fire the API call once against one API; print the status and the start of
+# the body. REST v2 first; REST v1 (served until 2026-11-15) as the fallback.
+fire_api() {
+    local api="$1" code
+    if [ "$api" = v2 ]; then
+        if [ "$ACTION" = "terminate" ]; then
+            code=$(curl -sS -o "$BODY" -w '%{http_code}' -X DELETE \
+                "https://api.runpod.io/v2/pods/$POD_ID" \
+                -H "Authorization: Bearer $API_KEY")
+        else
+            code=$(curl -sS -o "$BODY" -w '%{http_code}' -X POST \
+                "https://api.runpod.io/v2/pods/$POD_ID/action" \
+                -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
+                -d '{"action": "stop"}')
+        fi
+    elif [ "$ACTION" = "terminate" ]; then
         code=$(curl -sS -o "$BODY" -w '%{http_code}' -X DELETE \
             "https://rest.runpod.io/v1/pods/$POD_ID" \
             -H "Authorization: Bearer $API_KEY")
@@ -65,8 +78,12 @@ fire() {
             "https://rest.runpod.io/v1/pods/$POD_ID/stop" \
             -H "Authorization: Bearer $API_KEY")
     fi
-    echo "[killswitch] HTTP ${code:-none} $(head -c 200 "$BODY" | tr -d '\n')"
+    echo "[killswitch] $api HTTP ${code:-none} $(head -c 200 "$BODY" | tr -d '\n')"
     case "$code" in 2??) return 0 ;; *) return 1 ;; esac
+}
+
+fire() {
+    fire_api v2 || fire_api v1
 }
 
 attempt=1

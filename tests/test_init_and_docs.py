@@ -102,25 +102,45 @@ def test_pod_start_env_writer_round_trips_awkward_values(tmp_path):
 KILLSWITCH = ROOT / "examples/killswitch.sh"
 
 
-def fake_curl(tmp_path, status="200"):
-    """A curl stand-in that records its arguments and answers `-w '%{http_code}'`
-    with the given status."""
+def fake_curl(tmp_path, *statuses):
+    """A curl stand-in that logs each call's arguments (a "--" line between
+    calls) and answers `-w '%{http_code}'` with the next status in turn, the
+    last one repeating. Default: 200."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
+    queue = tmp_path / "statuses"
+    queue.write_text("\n".join(statuses or ("200",)) + "\n")
     curl = bindir / "curl"
-    curl.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$CURL_LOG"\nprintf "%s" "$CURL_STATUS"\n')
+    curl.write_text(
+        '#!/bin/bash\n'
+        'printf "%s\\n" "$@" -- >> "$CURL_LOG"\n'
+        'status=$(head -n 1 "$CURL_QUEUE")\n'
+        '[ "$(wc -l < "$CURL_QUEUE")" -gt 1 ] && sed -i 1d "$CURL_QUEUE"\n'
+        'printf "%s" "$status"\n'
+    )
     curl.chmod(0o755)
     keyfile = tmp_path / ".rp_key"
     keyfile.write_text("file-key\n")
     env = {
         "PATH": f"{bindir}:/usr/bin:/bin",
         "CURL_LOG": str(tmp_path / "curl.log"),
-        "CURL_STATUS": status,
+        "CURL_QUEUE": str(queue),
         "KILLSWITCH_KEY_FILE": str(keyfile),
         "KILLSWITCH_RETRY_SECONDS": "0",
         "KILLSWITCH_RETRIES": "2",
     }
     return env
+
+
+def curl_calls(env) -> list[list[str]]:
+    calls, current = [], []
+    for line in Path(env["CURL_LOG"]).read_text().splitlines():
+        if line == "--":
+            calls.append(current)
+            current = []
+        else:
+            current.append(line)
+    return calls
 
 
 def run_killswitch(env, action="terminate"):
@@ -131,10 +151,10 @@ def test_killswitch_reads_key_from_file_and_calls_api(tmp_path):
     env = fake_curl(tmp_path)
     result = run_killswitch(env)
     assert result.returncode == 0, result.stdout + result.stderr
-    args = Path(env["CURL_LOG"]).read_text().splitlines()
-    assert "DELETE" in args and any(a.endswith("/pods/podX") for a in args)
+    [args] = curl_calls(env)
+    assert "DELETE" in args and "https://api.runpod.io/v2/pods/podX" in args
     assert "Authorization: Bearer file-key" in args
-    assert "HTTP 200" in result.stdout and "[killswitch] done" in result.stdout
+    assert "v2 HTTP 200" in result.stdout and "[killswitch] done" in result.stdout
 
 
 def test_killswitch_ignores_the_pods_own_runpod_api_key(tmp_path):
@@ -144,8 +164,9 @@ def test_killswitch_ignores_the_pods_own_runpod_api_key(tmp_path):
     env["RUNPOD_API_KEY"] = "injected-pod-key"
     result = run_killswitch(env, action="stop")
     assert result.returncode == 0, result.stdout + result.stderr
-    args = Path(env["CURL_LOG"]).read_text().splitlines()
-    assert "POST" in args and any(a.endswith("/pods/podX/stop") for a in args)
+    [args] = curl_calls(env)
+    assert "POST" in args and "https://api.runpod.io/v2/pods/podX/action" in args
+    assert '{"action": "stop"}' in args
     assert "Authorization: Bearer file-key" in args
     assert "injected-pod-key" not in Path(env["CURL_LOG"]).read_text()
 
@@ -161,11 +182,21 @@ def test_killswitch_without_a_delivered_key_refuses_to_arm(tmp_path):
 
 
 def test_killswitch_retries_and_reports_a_failed_api_call(tmp_path):
-    env = fake_curl(tmp_path, status="403")
+    env = fake_curl(tmp_path, "403")
     result = run_killswitch(env, action="stop")
     assert result.returncode == 1
-    assert result.stdout.count("HTTP 403") == 2
+    assert result.stdout.count("v2 HTTP 403") == 2 and result.stdout.count("v1 HTTP 403") == 2
     assert "FAILED after 2 attempts" in result.stdout
+
+
+def test_killswitch_falls_back_to_rest_v1_when_v2_fails(tmp_path):
+    env = fake_curl(tmp_path, "500", "200")
+    result = run_killswitch(env, action="stop")
+    assert result.returncode == 0, result.stdout
+    first, second = curl_calls(env)
+    assert "https://api.runpod.io/v2/pods/podX/action" in first
+    assert "https://rest.runpod.io/v1/pods/podX/stop" in second
+    assert "v1 HTTP 200" in result.stdout
 
 
 def test_docs_never_put_the_api_key_on_a_command_line():
