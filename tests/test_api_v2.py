@@ -214,7 +214,7 @@ def test_start_translates_the_payload_and_prints_the_id(capsys):
     assert run_with(v2(t), ["start", "--volume-gb", "100", "--env", "A=b"], config=config) == 0
     body = t.last.body
     assert body["templateId"] == "tpl1" and body["cloud"] == "SECURE"
-    assert body["gpu"] == {"id": GPU_ID, "count": 1, "allowedCudaVersions": ["13.0"]}
+    assert body["gpu"] == {"id": GPU_ID, "count": 1, "minCudaVersion": "13.0"}
     assert body["mounts"] == {"persistent": {"size": 100, "path": "/workspace"}}
     assert body["env"] == {"A": "b"}
     assert "supportPublicIp" not in body and "gpuTypeIds" not in body
@@ -341,3 +341,8 @@ def test_selected_client_follows_rpt_api(tmp_path):
     env = {"RUNPOD_API_KEY": "k", "RPT_CACHE_DIR": str(tmp_path)}
     assert not isinstance(selected_client_from_env(env), RestV2Client)
     assert isinstance(selected_client_from_env({**env, "RPT_API": "v2"}), RestV2Client)
+
+
+def test_cuda_floor_is_the_lowest_allowed_version():
+    body = create_bodies({"name": "x", "gpuTypeIds": [GPU_ID], "allowedCudaVersions": ["12.10", "12.8", "13.0"]})[0]
+    assert body["gpu"]["minCudaVersion"] == "12.8"

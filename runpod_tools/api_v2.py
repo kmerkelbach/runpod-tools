@@ -14,6 +14,9 @@ Differences that cannot be hidden:
 * v2 ``start`` takes no GPU count; ``resume_pod`` ignores ``gpu_count``.
 * v2 creates one GPU type in one cloud; ``cloudType: ALL`` tries SECURE, then
   COMMUNITY.
+* rpt's ``allowed_cuda_versions`` (hosts whose driver supports a version) is
+  sent as v2's ``minCudaVersion``; v2's ``allowedCudaVersions`` is an exact
+  match and would turn away newer drivers.
 * v2 reports ``cost`` 0.0 for a stopped pod (v1/GraphQL reported the rate).
 * the GPU display name is not on the pod; it comes from the GPU catalog,
   cached for a day.
@@ -236,7 +239,10 @@ def create_bodies(payload: Mapping[str, Any]) -> list[dict]:
     """v2 create bodies for a v1 ``POST /pods`` payload, one per cloud to try."""
     gpu: dict[str, Any] = {"id": (payload.get("gpuTypeIds") or [None])[0], "count": payload.get("gpuCount") or 1}
     if payload.get("allowedCudaVersions"):
-        gpu["allowedCudaVersions"] = list(payload["allowedCudaVersions"])
+        # rpt's setting means "the host driver supports this CUDA version"; v2's
+        # allowedCudaVersions matches exactly (13.0 would exclude a 13.2 host),
+        # and minCudaVersion is the floor that says what was meant.
+        gpu["minCudaVersion"] = min(payload["allowedCudaVersions"], key=cuda_key)
     body: dict[str, Any] = {"name": payload["name"], "gpu": gpu}
     if payload.get("templateId"):
         body["templateId"] = payload["templateId"]
@@ -258,6 +264,10 @@ def create_bodies(payload: Mapping[str, Any]) -> list[dict]:
     cloud = payload.get("cloudType") or "SECURE"
     clouds = ["SECURE", "COMMUNITY"] if cloud == "ALL" else [cloud]
     return [{**body, "cloud": c} for c in clouds]
+
+
+def cuda_key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in str(version).split(".") if part.isdigit())
 
 
 def legacy_gpu(gpu: dict) -> dict:
