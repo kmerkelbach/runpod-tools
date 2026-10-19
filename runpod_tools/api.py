@@ -30,14 +30,21 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from runpod_tools.podcache import Backoff, PodCache, backoff_from_env, cache_from_env, usage_log_from_env
+from runpod_tools.podcache import (
+    Backoff,
+    PodCache,
+    backoff_from_env,
+    cache_from_env,
+    usage_log_from_env,
+)
 
 REST_BASE = "https://rest.runpod.io/v1"
 GRAPHQL_URL = "https://api.runpod.io/graphql"
+V2_BASE = "https://api.runpod.io/v2"
 USER_AGENT = "runpod-tools/0.1"
 API_KEY_HELP = "Set RUNPOD_API_KEY (create one at https://www.runpod.io/console/user/settings)."
 
@@ -121,7 +128,7 @@ def _caller() -> str:
 def append_usage(path: Path, label: str, status: int, headers: Mapping[str, str]) -> None:
     """One tab-separated line per request: time, pid, endpoint, status, the
     remaining hourly budget when the server reports it, command and parent."""
-    remaining = next((v for k, v in headers.items() if k.lower() == "x-ratelimit-remaining-hour"), "")
+    remaining = next((v for k, v in headers.items() if k.lower() in ("x-ratelimit-remaining-hour", "ratelimit")), "")
     line = (f"{time.strftime('%Y-%m-%dT%H:%M:%S')}\t{os.getpid()}\t{label}\t{status}\t{remaining}"
             f"\t{_caller()}\n")
     try:
@@ -133,6 +140,8 @@ def append_usage(path: Path, label: str, status: int, headers: Mapping[str, str]
 
 
 class RunpodClient:
+    rest_base = REST_BASE
+
     def __init__(
         self,
         api_key: str,
@@ -161,7 +170,7 @@ class RunpodClient:
 
     def _request(self, method: str, url: str, body: bytes | None, label: str) -> tuple[int, bytes, Any]:
         """Send one request, waiting out rate limits; returns (status, raw, parsed)."""
-        api = "graphql" if url == GRAPHQL_URL else "rest"
+        api = "graphql" if url == GRAPHQL_URL else ("v2" if url.startswith(V2_BASE) else "rest")
         if self._backoff is not None and (until := self._backoff.until(api)) is not None:
             raise RunpodError(
                 f"{label}: rate limited (429) by Runpod until {time.strftime('%H:%M:%S', time.localtime(until))} "
@@ -216,9 +225,9 @@ class RunpodClient:
 
     def rest(self, method: str, path: str, body: Mapping[str, Any] | None = None) -> Any:
         raw = json.dumps(body).encode() if body is not None else None
-        status, data, parsed = self._request(method, REST_BASE + path, raw, f"{method} {path}")
+        status, data, parsed = self._request(method, self.rest_base + path, raw, f"{method} {path}")
         if not 200 <= status < 300:
-            message = parsed.get("error") if isinstance(parsed, dict) else None
+            message = _error_message(parsed)
             raise RunpodError(f"{method} {path} failed ({status}): {message or data.decode(errors='replace')}", status)
         return parsed
 
@@ -359,7 +368,9 @@ class RunpodClient:
     def patch_template(self, template_id: str, payload: Mapping[str, Any]) -> None:
         self.rest("PATCH", f"/templates/{template_id}", payload)
 
-    def save_template(self, template_input: Mapping[str, Any]) -> dict:
+    def save_template(self, template_input: Mapping[str, Any], changed: Sequence[str] = ()) -> dict:
+        """GraphQL saveTemplate needs the full object; ``changed`` names the
+        fields the caller changed (the v2 client sends only those)."""
         mutation = """
         mutation SaveTemplate($input: SaveTemplateInput!) {
           saveTemplate(input: $input) { id name ports volumeInGb imageName }
@@ -374,6 +385,19 @@ def _normalise_template(template: dict) -> dict:
     env = template.get("env") or []
     out["env"] = {e["key"]: e["value"] for e in env}
     return out
+
+
+def _error_message(parsed: Any) -> str | None:
+    """v1 sends {"error": ...}; v2 sends RFC 9457 problem details."""
+    if not isinstance(parsed, dict):
+        return None
+    if parsed.get("error"):
+        return str(parsed["error"])
+    parts = [str(parsed[k]) for k in ("title", "detail") if parsed.get(k)]
+    errors = parsed.get("errors")
+    if isinstance(errors, list) and errors:
+        parts.append("; ".join(str(e.get("message", e)) if isinstance(e, dict) else str(e) for e in errors))
+    return ": ".join(parts) or None
 
 
 def _parse_json(data: bytes) -> Any:

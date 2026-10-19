@@ -32,6 +32,11 @@ SUBCOMMANDS: list[str] = [
 ]
 
 
+# RPT_API=v2 makes `rpt` use REST API v2 (`rpt2` always does). REST v1 stops
+# serving on 2026-11-15 and GraphQL is retired in early 2027.
+API_ENV = "RPT_API"
+
+
 class UsageError(Exception):
     """Bad arguments or configuration. Exit 2."""
 
@@ -178,6 +183,10 @@ def main(
     parser = build_parser()
     args = parser.parse_args(argv)
     env = os.environ if env is None else env
+    if client_factory is client_from_env and env.get(API_ENV, "").strip().lower() == "v2":
+        from runpod_tools.api_v2 import client_v2_from_env
+
+        client_factory = client_v2_from_env
     try:
         config = config_loader()
     except ConfigError as exc:
@@ -199,3 +208,10 @@ def main(
     except KeyboardInterrupt:
         ctx.warn("interrupted")
         return 130
+
+
+def main_v2(argv: Sequence[str] | None = None) -> int:
+    """``rpt2``: the same commands over REST API v2, to run side by side with ``rpt``."""
+    from runpod_tools.api_v2 import client_v2_from_env
+
+    return main(argv, client_factory=client_v2_from_env)

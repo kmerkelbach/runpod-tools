@@ -222,7 +222,7 @@ def run_ports(args, ctx: Context) -> int:
     if not ctx.confirm(f"save template {template_id}?", args.yes):
         ctx.print("cancelled.")
         return 0
-    saved = ctx.client().save_template(_save_input(template, ports=new))
+    saved = ctx.client().save_template(_save_input(template, ports=new), changed=["ports"])
     ctx.print(f"saved; ports now {saved.get('ports')}")
     return 0
 
@@ -237,6 +237,6 @@ def run_volume(args, ctx: Context) -> int:
     if not ctx.confirm(f"save template {template_id}?", args.yes):
         ctx.print("cancelled.")
         return 0
-    saved = ctx.client().save_template(_save_input(template, volumeInGb=args.gb))
+    saved = ctx.client().save_template(_save_input(template, volumeInGb=args.gb), changed=["volumeInGb"])
     ctx.print(f"saved; volume now {saved.get('volumeInGb')} GB")
     return 0
