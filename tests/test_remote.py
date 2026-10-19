@@ -107,6 +107,7 @@ def test_run_background_wraps_with_nohup_and_log():
 def test_run_background_wrapper_survives_a_real_shell(tmp_path, monkeypatch):
     """Quoting is verified by executing the wrapper in bash, not by eyeballing escapes."""
     import time
+
     from runpod_tools.commands.ssh import background_wrapper
 
     monkeypatch.setattr("runpod_tools.commands.ssh.BACKGROUND_DIR", str(tmp_path))

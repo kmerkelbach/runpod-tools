@@ -156,3 +156,14 @@ template` does this.
 
 **A timed-out create may still have created a pod.** After any timeout
 storm, `rpt pods` and look for orphans.
+
+**The API is rate limited per account (since 2026-10-19).** 180 requests a
+minute, 3,600 an hour, 43,200 a day, REST and GraphQL together, for every
+process and person on the key. Nearly every command starts with a pod
+listing, so a driver probing twenty pods in parallel used to send twenty
+listings at once; several such drivers produced 25 minutes of 429s in which
+`rpt pods` printed nothing and scripts summing its `$/hr` column read $0.
+`rpt` now backs off on 429 (bounded by `RPT_RATE_LIMIT_WAIT`, then exit 1),
+and endpoint-only commands share one cached listing (see README, Setup).
+A script that parses `rpt pods` must still treat a non-zero exit as
+"unknown", never as "nothing running".

@@ -5,8 +5,13 @@ from __future__ import annotations
 import shlex
 
 from runpod_tools.cli import Context, OperationError, UsageError, add_pod_selection
-from runpod_tools.pods import NO_ENDPOINT_NOTE, select_pods, ssh_endpoint
-from runpod_tools.sshutil import remote_command, ssh_base, ssh_command_string, ssh_target
+from runpod_tools.pods import NO_ENDPOINT_NOTE, ssh_endpoint
+from runpod_tools.sshutil import (
+    remote_command,
+    ssh_base,
+    ssh_command_string,
+    ssh_target,
+)
 
 BACKGROUND_DIR = "/workspace/rpt"
 
@@ -41,8 +46,7 @@ def _endpoint_or_fail(pod: dict):
 
 def run_ssh(args, ctx: Context) -> int:
     cfg = ctx.config.ssh
-    pods = select_pods(ctx.client().list_pods(), ids=args.pod, select_all=False, statuses=["RUNNING"],
-                       interactive=ctx.isatty, name_prefix=ctx.config.pod.name_prefix)
+    pods = ctx.running_pods(args.pod)
     ep = _endpoint_or_fail(pods[0])
     if args.print:
         ctx.print(ssh_command_string(ep, cfg.key, cfg.user))
@@ -74,8 +78,7 @@ def run_run(args, ctx: Context) -> int:
         command = background_wrapper(command, args.background)
     remote = remote_command(command, source_env=not args.raw)
 
-    pods = select_pods(ctx.client().list_pods(), ids=args.pod, select_all=args.all, statuses=["RUNNING"],
-                       interactive=ctx.isatty, multi=True, name_prefix=ctx.config.pod.name_prefix)
+    pods = ctx.running_pods(args.pod, select_all=args.all, multi=True)
     worst = 0
     for pod in pods:
         try:

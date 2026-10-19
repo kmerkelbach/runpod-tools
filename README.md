@@ -35,6 +35,15 @@ what never to do). Operational lessons are in [docs/gotchas.md](docs/gotchas.md)
 
    Per-shell overrides: `RUNPOD_TEMPLATE_ID`, `RUNPOD_POD_NAME_PREFIX`,
    `RUNPOD_SSH_KEY`.
+4. **Rate limits** (Runpod: 180 requests/minute per account, both APIs
+   together). `rpt` retries a 429 with jittered exponential backoff for up to
+   `RPT_RATE_LIMIT_WAIT` seconds (default 90, `0` disables), then exits 1.
+   `run`, `ssh`, `push`, `pull` and `fetch` read a pod listing shared by all
+   `rpt` processes of the account (`RPT_POD_CACHE_TTL`, default 30 s, `0`
+   disables; under `~/.cache/runpod-tools`, or `RPT_CACHE_DIR`). When a
+   refresh is rate limited they fall back to a listing up to
+   `RPT_POD_CACHE_STALE` seconds old (default 600). `pods`, `start`, `stop`,
+   `resume`, `terminate` and `wait` always list fresh.
 
 ## Commands
 

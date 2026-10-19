@@ -17,7 +17,13 @@ Runpod semantics worth knowing (details in docs/gotchas.md):
 from __future__ import annotations
 
 from runpod_tools.cli import Context, add_pod_selection, add_yes_flag
-from runpod_tools.pods import cost_so_far, describe, format_uptime, select_pods, uptime_seconds
+from runpod_tools.pods import (
+    cost_so_far,
+    describe,
+    format_uptime,
+    select_pods,
+    uptime_seconds,
+)
 
 ACTIONS = {
     "stop": dict(statuses=["RUNNING"], past="stopped",

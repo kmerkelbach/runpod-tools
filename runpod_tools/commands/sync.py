@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from runpod_tools.cli import Context, OperationError, UsageError, add_pod_selection
 from runpod_tools.config import SyncConfig
-from runpod_tools.pods import NO_ENDPOINT_NOTE, select_pods, ssh_endpoint
+from runpod_tools.pods import NO_ENDPOINT_NOTE, ssh_endpoint
 from runpod_tools.sshutil import rsync_pull, rsync_push
 
 RSYNC_PARTIAL = 23  # "some files/attrs were not transferred" — e.g. the remote dir does not exist
@@ -74,8 +74,7 @@ def run_push(args, ctx: Context) -> int:
     ssh = ctx.config.ssh
     if args.delete:
         ctx.warn("push --delete: files absent locally will be REMOVED on the pod under " + sync.remote_dest)
-    pods = select_pods(ctx.client().list_pods(), ids=args.pod, select_all=args.all, statuses=["RUNNING"],
-                       interactive=ctx.isatty, multi=True, name_prefix=ctx.config.pod.name_prefix)
+    pods = ctx.running_pods(args.pod, select_all=args.all, multi=True)
     for pod in pods:
         ep = _endpoint(pod)
         ctx.print(f"push {sync.local_root} -> {pod.get('name')} ({ep.ip}:{ep.port}):{sync.remote_dest}")
@@ -98,8 +97,7 @@ def run_pull(args, ctx: Context) -> int:
     ssh = ctx.config.ssh
     if not args.allow_dirty and not _git_is_clean(ctx, sync.local_root):
         raise UsageError(f"{sync.local_root} is not clean; commit or stash first, or pass --allow-dirty")
-    pods = select_pods(ctx.client().list_pods(), ids=args.pod, select_all=False, statuses=["RUNNING"],
-                       interactive=ctx.isatty, name_prefix=ctx.config.pod.name_prefix)
+    pods = ctx.running_pods(args.pod)
     pod = pods[0]
     ep = _endpoint(pod)
     excludes = list(dict.fromkeys([*sync.push_excludes, *sync.pull_excludes]))
@@ -115,8 +113,7 @@ def run_fetch(args, ctx: Context) -> int:
     sync = _sync_config(ctx)
     ssh = ctx.config.ssh
     dirs = args.dir or sync.fetch_dirs
-    pods = select_pods(ctx.client().list_pods(), ids=args.pod, select_all=args.all, statuses=["RUNNING"],
-                       interactive=ctx.isatty, multi=True, name_prefix=ctx.config.pod.name_prefix)
+    pods = ctx.running_pods(args.pod, select_all=args.all, multi=True)
     for pod in pods:
         ep = _endpoint(pod)
         for name in dirs:

@@ -19,7 +19,7 @@ from typing import Any
 from runpod_tools import __version__
 from runpod_tools.api import RunpodClient, RunpodError, client_from_env
 from runpod_tools.config import Config, ConfigError, load_config
-from runpod_tools.pods import SelectionError
+from runpod_tools.pods import SelectionError, select_pods, ssh_endpoint
 
 # Every registered subcommand, in help order. Nested ones are "parent child".
 SUBCOMMANDS: list[str] = [
@@ -63,6 +63,30 @@ class Context:
             except RunpodError as exc:  # no key: a setup problem, not an API failure
                 raise UsageError(str(exc)) from exc
         return self._client
+
+    def running_pods(self, ids: str | None, *, select_all: bool = False, multi: bool = False) -> list[dict]:
+        """Running pods for a command that only needs their ssh endpoints.
+
+        Reads the shared listing cache. When the cached listing cannot resolve
+        the selection or lacks an endpoint (a pod started or restarted since it
+        was written), selects again from a fresh listing.
+        """
+        client = self.client()
+        listing, from_cache = client.cached_pods()
+
+        def select(pods: list[dict]) -> list[dict]:
+            return select_pods(pods, ids=ids, select_all=select_all, statuses=["RUNNING"],
+                               interactive=self.isatty, multi=multi, name_prefix=self.config.pod.name_prefix)
+
+        if not from_cache:
+            return select(listing)
+        try:
+            chosen = select(listing)
+        except SelectionError:
+            return select(client.list_pods())
+        if all(ssh_endpoint(p) is not None for p in chosen):
+            return chosen
+        return select(client.list_pods())
 
     def print(self, *parts: Any) -> None:
         print(*parts, file=self.out)
@@ -114,7 +138,18 @@ def add_yes_flag(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    from runpod_tools.commands import gpus, init, lifecycle, pods, ssh, start, sync, template, volumes, wait
+    from runpod_tools.commands import (
+        gpus,
+        init,
+        lifecycle,
+        pods,
+        ssh,
+        start,
+        sync,
+        template,
+        volumes,
+        wait,
+    )
 
     parser = argparse.ArgumentParser(
         prog="rpt",

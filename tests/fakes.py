@@ -18,24 +18,42 @@ class Call:
 class FakeTransport:
     """Queue of (status, body) responses; records every request it receives."""
 
-    responses: list[tuple[int, object]] = field(default_factory=list)
+    responses: list[tuple[int, object, dict[str, str]]] = field(default_factory=list)
     calls: list[Call] = field(default_factory=list)
 
     def __call__(self, method: str, url: str, headers: dict[str, str], body: bytes | None):
         self.calls.append(Call(method, url, dict(headers), json.loads(body) if body else None))
         if not self.responses:
             raise AssertionError(f"unexpected request {method} {url}")
-        status, payload = self.responses.pop(0)
+        status, payload, headers = self.responses.pop(0)
         raw = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
-        return status, raw
+        return status, raw, headers
 
-    def queue(self, status: int, payload: object) -> "FakeTransport":
-        self.responses.append((status, payload))
+    def queue(self, status: int, payload: object, headers: dict[str, str] | None = None) -> "FakeTransport":
+        self.responses.append((status, payload, headers or {}))
         return self
 
     @property
     def last(self) -> Call:
         return self.calls[-1]
+
+
+@dataclass
+class FakeClock:
+    """A clock that only moves when the client sleeps; records every sleep."""
+
+    now: float = 0.0
+    sleeps: list[float] = field(default_factory=list)
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+RATE_LIMITED = (429, {"error": "Too Many Requests"})
 
 
 def graphql_ok(data: dict) -> tuple[int, dict]:
