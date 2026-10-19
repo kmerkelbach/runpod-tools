@@ -304,3 +304,17 @@ def test_a_long_retry_after_blocks_later_calls_without_sending(tmp_path):
     wall[0] += 1201
     t.queue(*graphql_ok({"myself": {"pods": []}}))
     assert c.list_pods() == []
+
+
+def test_a_short_shared_block_is_waited_out(tmp_path):
+    from runpod_tools.podcache import Backoff
+
+    wall = [1000.0]
+    backoff = Backoff(tmp_path, "acct", clock=lambda: wall[0])
+    backoff.block("graphql", 20)
+    t = FakeTransport().queue(*graphql_ok({"myself": {"pods": []}}))
+    clock = FakeClock()
+    c = RunpodClient("k", transport=t, sleep=clock.sleep, clock=clock, log=lambda _m: None, backoff=backoff,
+                     rate_limit_wait=90)
+    assert c.list_pods() == []
+    assert clock.sleeps == [20.0]

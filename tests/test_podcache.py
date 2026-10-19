@@ -188,3 +188,57 @@ def test_pods_command_always_lists_fresh(cache, capsys):
     t = FakeTransport().queue(*RATE_LIMITED)
     assert run(["pods"], t, pod_cache=cache) == 1
     assert len(t.calls) == 1
+
+
+def test_run_all_lists_fresh_even_with_a_current_cache(cache):
+    cache.write([READY])
+    t = FakeTransport().queue(*listing(READY, OTHER))
+    rec = Recorder()
+    assert run(["run", "--all", "--", "true"], t, config=cfg(), runner=rec, pod_cache=cache) == 0
+    assert len(t.calls) == 1 and len(rec.calls) == 2
+
+
+def test_waiters_take_the_stale_listing_after_a_failed_refresh(cache, clock):
+    cache.write([READY])
+    clock.now += 120
+    cache.mark_refresh_failed()
+    t = FakeTransport()
+    assert client(t, cache).cached_pods() == ([READY], True)
+    assert t.calls == []
+
+
+def test_an_old_failed_refresh_is_tried_again(cache, clock):
+    cache.write([READY])
+    cache.mark_refresh_failed()
+    clock.now += 120
+    t = FakeTransport().queue(*listing(READY, OTHER))
+    assert client(t, cache).cached_pods() == ([READY, OTHER], False)
+
+
+def test_a_stuck_lock_holder_does_not_block_forever(cache):
+    import fcntl
+
+    cache.lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(cache.lock_path, "a") as holder:
+        fcntl.flock(holder, fcntl.LOCK_EX)
+        result = []
+
+        def waiter():
+            with cache.refreshing(timeout=0.5, poll=0.05):
+                result.append("ran")
+
+        thread = threading.Thread(target=waiter)
+        thread.start()
+        thread.join(timeout=5)
+        assert result == ["ran"]
+
+
+def test_a_change_drops_a_listing_written_during_it(cache):
+    class Racing(FakeTransport):
+        def __call__(self, *args):
+            cache.write([READY])  # a refresh in flight lands mid-change
+            return super().__call__(*args)
+
+    t = Racing().queue(204, b"")
+    client(t, cache).stop_pod("p1")
+    assert cache.read(30) is None

@@ -72,12 +72,18 @@ class Context:
     def running_pods(self, ids: str | None, *, select_all: bool = False, multi: bool = False) -> list[dict]:
         """Running pods for a command that only needs their ssh endpoints.
 
-        Reads the shared listing cache. When the cached listing cannot resolve
+        With an explicit ``ids`` it reads the shared listing cache. When the cached listing cannot resolve
         the selection or lacks an endpoint (a pod started or restarted since it
         was written), selects again from a fresh listing.
         """
         client = self.client()
-        listing, from_cache = client.cached_pods()
+
+        # Only an explicit --pod reads the cache: --all and automatic selection
+        # must see pods that started or stopped in the last seconds.
+        if ids is None or select_all:
+            listing, from_cache = client.list_pods(), False
+        else:
+            listing, from_cache = client.cached_pods()
 
         def select(pods: list[dict]) -> list[dict]:
             return select_pods(pods, ids=ids, select_all=select_all, statuses=["RUNNING"],

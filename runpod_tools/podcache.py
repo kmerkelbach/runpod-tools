@@ -82,9 +82,29 @@ class PodCache:
         except OSError:
             pass
 
+    @property
+    def failed_path(self) -> Path:
+        return self.path.with_suffix(".refresh-failed")
+
+    def mark_refresh_failed(self) -> None:
+        try:
+            self.failed_path.write_text(f"{self.clock():.0f}\n")
+        except OSError:
+            pass
+
+    def refresh_failed_recently(self) -> bool:
+        """A refresh was rate limited within the last ``ttl`` seconds."""
+        try:
+            failed = float(self.failed_path.read_text().strip())
+        except (OSError, ValueError):
+            return False
+        return self.clock() - failed <= self.ttl
+
     @contextmanager
-    def refreshing(self) -> Iterator[None]:
-        """Hold the refresh lock; without a usable lock file, proceed unlocked."""
+    def refreshing(self, timeout: float = 90.0, poll: float = 0.2) -> Iterator[None]:
+        """Hold the refresh lock, waiting at most ``timeout`` seconds for it;
+        without the lock (a stuck holder, an unusable lock file) proceed
+        unlocked rather than wait forever."""
         try:
             self.lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             handle = open(self.lock_path, "a")
@@ -92,11 +112,22 @@ class PodCache:
             yield
             return
         with handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
+            deadline = time.monotonic() + timeout
+            locked = False
+            while True:
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    locked = True
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        break
+                    time.sleep(poll)
             try:
                 yield
             finally:
-                fcntl.flock(handle, fcntl.LOCK_UN)
+                if locked:
+                    fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def _seconds(env: Mapping[str, str], name: str, default: float) -> float:

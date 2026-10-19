@@ -60,26 +60,31 @@ fire_api() {
     local api="$1" code
     if [ "$api" = v2 ]; then
         if [ "$ACTION" = "terminate" ]; then
-            code=$(curl -sS -o "$BODY" -w '%{http_code}' -X DELETE \
+            code=$(curl -sS --max-time 60 -o "$BODY" -w '%{http_code}' -X DELETE \
                 "https://api.runpod.io/v2/pods/$POD_ID" \
                 -H "Authorization: Bearer $API_KEY")
         else
-            code=$(curl -sS -o "$BODY" -w '%{http_code}' -X POST \
+            code=$(curl -sS --max-time 60 -o "$BODY" -w '%{http_code}' -X POST \
                 "https://api.runpod.io/v2/pods/$POD_ID/action" \
                 -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
                 -d '{"action": "stop"}')
         fi
     elif [ "$ACTION" = "terminate" ]; then
-        code=$(curl -sS -o "$BODY" -w '%{http_code}' -X DELETE \
+        code=$(curl -sS --max-time 60 -o "$BODY" -w '%{http_code}' -X DELETE \
             "https://rest.runpod.io/v1/pods/$POD_ID" \
             -H "Authorization: Bearer $API_KEY")
     else
-        code=$(curl -sS -o "$BODY" -w '%{http_code}' -X POST \
+        code=$(curl -sS --max-time 60 -o "$BODY" -w '%{http_code}' -X POST \
             "https://rest.runpod.io/v1/pods/$POD_ID/stop" \
             -H "Authorization: Bearer $API_KEY")
     fi
     echo "[killswitch] $api HTTP ${code:-none} $(head -c 200 "$BODY" | tr -d '\n')"
-    case "$code" in 2??) return 0 ;; *) return 1 ;; esac
+    case "$code" in
+        2??) return 0 ;;
+        # v2 refuses a transition the pod has already made (stopped or gone).
+        409) [ "$api" = v2 ] && return 0 || return 1 ;;
+        *) return 1 ;;
+    esac
 }
 
 fire() {

@@ -30,7 +30,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,7 @@ API_KEY_HELP = "Set RUNPOD_API_KEY (create one at https://www.runpod.io/console/
 
 DEFAULT_RATE_LIMIT_WAIT = 90.0
 RATE_LIMIT_WAIT_ENV = "RPT_RATE_LIMIT_WAIT"
+USAGE_LOG_MAX_BYTES = 20_000_000
 FIRST_BACKOFF = 2.0
 MAX_BACKOFF = 30.0
 
@@ -133,6 +135,8 @@ def append_usage(path: Path, label: str, status: int, headers: Mapping[str, str]
             f"\t{_caller()}\n")
     try:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if path.exists() and path.stat().st_size > USAGE_LOG_MAX_BYTES:
+            os.replace(path, path.with_name(path.name + ".1"))
         with open(path, "a") as handle:
             handle.write(line)
     except OSError:
@@ -171,13 +175,17 @@ class RunpodClient:
     def _request(self, method: str, url: str, body: bytes | None, label: str) -> tuple[int, bytes, Any]:
         """Send one request, waiting out rate limits; returns (status, raw, parsed)."""
         api = "graphql" if url == GRAPHQL_URL else ("v2" if url.startswith(V2_BASE) else "rest")
-        if self._backoff is not None and (until := self._backoff.until(api)) is not None:
-            raise RunpodError(
-                f"{label}: rate limited (429) by Runpod until {time.strftime('%H:%M:%S', time.localtime(until))} "
-                "(an earlier rpt call was told to retry then); not sending",
-                429,
-            )
         deadline = self._clock() + self._rate_limit_wait
+        if self._backoff is not None and (until := self._backoff.until(api)) is not None:
+            blocked_for = until - self._backoff.clock()
+            if blocked_for > self._rate_limit_wait:
+                raise RunpodError(
+                    f"{label}: rate limited (429) by Runpod until {time.strftime('%H:%M:%S', time.localtime(until))} "
+                    "(an earlier rpt call was told to retry then); not sending",
+                    429,
+                )
+            self._log(f"rpt: {label} rate limited by an earlier call; waiting {blocked_for:.0f}s")
+            self._sleep(blocked_for)
         attempt = 0
         while True:
             try:
@@ -272,24 +280,31 @@ class RunpodClient:
     def cached_pods(self) -> tuple[list[dict], bool]:
         """The pod listing for commands that only need an endpoint, and whether
         it came from the cache. A current cached listing is used as is; otherwise
-        one process refreshes it while the others wait. When the API refuses the
-        refresh with a rate limit, a listing up to ``stale_limit`` old is used."""
+        one process refreshes it while the others wait (at most the rate-limit
+        wait). When the API refuses the refresh with a rate limit, a listing up to
+        ``stale_limit`` old is used, and processes that waited for that refresh
+        take the same listing instead of trying again."""
         cache = self.pod_cache
         if cache is None:
             return self.list_pods(), False
         pods = cache.read(cache.ttl)
         if pods is not None:
             return pods, True
-        with cache.refreshing():
+        with cache.refreshing(timeout=self._rate_limit_wait):
             pods = cache.read(cache.ttl)
             if pods is not None:
                 return pods, True
+            if cache.refresh_failed_recently():
+                stale = cache.read(cache.stale_limit)
+                if stale is not None:
+                    return stale, True
             try:
                 return self.list_pods(), False
             except RunpodError as exc:
                 stale = cache.read(cache.stale_limit) if exc.status == 429 else None
                 if stale is None:
                     raise
+                cache.mark_refresh_failed()
                 self._log(f"rpt: pod listing rate limited; using the cached listing (<= {cache.stale_limit:.0f}s old)")
                 return stale, True
 
@@ -298,13 +313,23 @@ class RunpodClient:
         if self.pod_cache is not None:
             self.pod_cache.clear()
 
-    def create_pod(self, payload: Mapping[str, Any]) -> dict:
+    @contextmanager
+    def changing_pods(self) -> Iterator[None]:
+        """Drop the cached listing before and after a change to the account's
+        pods: a refresh in flight could otherwise write the old listing back."""
         self.forget_pods()
-        return self.rest("POST", "/pods", payload)
+        try:
+            yield
+        finally:
+            self.forget_pods()
+
+    def create_pod(self, payload: Mapping[str, Any]) -> dict:
+        with self.changing_pods():
+            return self.rest("POST", "/pods", payload)
 
     def stop_pod(self, pod_id: str) -> None:
-        self.forget_pods()
-        self.rest("POST", f"/pods/{pod_id}/stop")
+        with self.changing_pods():
+            self.rest("POST", f"/pods/{pod_id}/stop")
 
     def resume_pod(self, pod_id: str, gpu_count: int = 1) -> None:
         mutation = """
@@ -312,8 +337,8 @@ class RunpodClient:
           podResume(input: {podId: $podId, gpuCount: $gpuCount}) { id }
         }
         """
-        self.forget_pods()
-        data = self.graphql(mutation, {"podId": pod_id, "gpuCount": gpu_count})
+        with self.changing_pods():
+            data = self.graphql(mutation, {"podId": pod_id, "gpuCount": gpu_count})
         if not data.get("podResume"):
             raise RunpodError(f"resume {pod_id}: empty response")
 
@@ -321,8 +346,8 @@ class RunpodClient:
         mutation = """
         mutation TerminatePod($podId: String!) { podTerminate(input: {podId: $podId}) }
         """
-        self.forget_pods()
-        self.graphql(mutation, {"podId": pod_id})
+        with self.changing_pods():
+            self.graphql(mutation, {"podId": pod_id})
 
     # -- catalogue -------------------------------------------------------------
 

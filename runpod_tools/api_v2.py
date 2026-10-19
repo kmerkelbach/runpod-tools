@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import urllib.parse
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -48,14 +49,17 @@ from runpod_tools.podcache import (
 PAGE_LIMIT = 1000
 CATALOG_TTL = 24 * 3600.0
 
-# v2 status -> the v1/GraphQL desiredStatus commands select on.
+# v2 status -> the v1/GraphQL desiredStatus commands select on. desiredStatus
+# was the desired state: a pod still booting read RUNNING (with no runtime),
+# so stop and terminate reach it. An ERROR pod can be started or terminated,
+# as a stopped one can.
 STATUS = {
-    "PROVISIONING": "CREATED",
-    "STARTING": "CREATED",
+    "PROVISIONING": "RUNNING",
+    "STARTING": "RUNNING",
     "RUNNING": "RUNNING",
     "EXITED": "EXITED",
     "TERMINATED": "TERMINATED",
-    "ERROR": "ERROR",
+    "ERROR": "EXITED",
 }
 
 DEFAULT_MOUNT_PATH = "/workspace"
@@ -74,8 +78,10 @@ class RestV2Client(RunpodClient):
         items: list[dict] = []
         cursor = None
         while True:
-            query = f"?limit={PAGE_LIMIT}" + (f"&cursor={cursor}" if cursor else "")
-            data = self.rest("GET", path + query) or {}
+            query = f"?limit={PAGE_LIMIT}" + (f"&cursor={urllib.parse.quote(str(cursor), safe='')}" if cursor else "")
+            data = self.rest("GET", path + query)
+            if not isinstance(data, dict):
+                raise RunpodError(f"GET {path}: unexpected response {str(data)[:100]!r}")
             items.extend(data.get(key) or [])
             page = data.get("pagination") or {}
             cursor = page.get("nextCursor")
@@ -92,30 +98,30 @@ class RestV2Client(RunpodClient):
         return pods
 
     def create_pod(self, payload: Mapping[str, Any]) -> dict:
-        self.forget_pods()
         bodies = create_bodies(payload)
-        for index, body in enumerate(bodies):
-            try:
-                pod = self.rest("POST", "/pods", body) or {}
-            except RunpodError as exc:
-                # cloudType ALL: a capacity refusal in one cloud moves on to the next.
-                if exc.status == 400 and index + 1 < len(bodies):
-                    continue
-                raise
-            return legacy_created(pod)
+        with self.changing_pods():
+            for index, body in enumerate(bodies):
+                try:
+                    pod = self.rest("POST", "/pods", body) or {}
+                except RunpodError as exc:
+                    # cloudType ALL: only a capacity refusal moves on to the next cloud.
+                    if is_capacity_error(exc) and index + 1 < len(bodies):
+                        continue
+                    raise
+                return legacy_created(pod)
         raise RunpodError("create: no request body")  # unreachable: create_bodies is never empty
 
     def stop_pod(self, pod_id: str) -> None:
-        self.forget_pods()
-        self.rest("POST", f"/pods/{pod_id}/action", {"action": "stop"})
+        with self.changing_pods():
+            self.rest("POST", f"/pods/{pod_id}/action", {"action": "stop"})
 
     def resume_pod(self, pod_id: str, gpu_count: int = 1) -> None:
-        self.forget_pods()
-        self.rest("POST", f"/pods/{pod_id}/action", {"action": "start"})
+        with self.changing_pods():
+            self.rest("POST", f"/pods/{pod_id}/action", {"action": "start"})
 
     def terminate_pod(self, pod_id: str) -> None:
-        self.forget_pods()
-        self.rest("DELETE", f"/pods/{pod_id}")
+        with self.changing_pods():
+            self.rest("DELETE", f"/pods/{pod_id}")
 
     # -- catalogue -------------------------------------------------------------
 
@@ -233,6 +239,11 @@ def legacy_created(pod: dict) -> dict:
         "costPerHr": pod.get("cost") or 0,
         "machine": {"gpuTypeId": gpu.get("id"), "dataCenterId": pod.get("dataCenterId")},
     }
+
+
+def is_capacity_error(exc: RunpodError) -> bool:
+    text = exc.message.lower()
+    return exc.status == 400 and any(word in text for word in ("available", "capacity", "stock"))
 
 
 def create_bodies(payload: Mapping[str, Any]) -> list[dict]:

@@ -258,8 +258,8 @@ def test_network_volume_and_start_command_translate():
 # -- translation details ---------------------------------------------------------------
 
 
-@pytest.mark.parametrize("v2_status,legacy", [("PROVISIONING", "CREATED"), ("STARTING", "CREATED"),
-                                              ("RUNNING", "RUNNING"), ("EXITED", "EXITED"), ("ERROR", "ERROR")])
+@pytest.mark.parametrize("v2_status,legacy", [("PROVISIONING", "RUNNING"), ("STARTING", "RUNNING"),
+                                              ("RUNNING", "RUNNING"), ("EXITED", "EXITED"), ("ERROR", "EXITED")])
 def test_status_mapping(v2_status, legacy):
     assert legacy_pod(v2_pod(status=v2_status), {})["desiredStatus"] == legacy
 
@@ -360,3 +360,32 @@ def test_selected_client_follows_rpt_api(tmp_path):
 def test_cuda_floor_is_the_lowest_allowed_version():
     body = create_bodies({"name": "x", "gpuTypeIds": [GPU_ID], "allowedCudaVersions": ["12.10", "12.8", "13.0"]})[0]
     assert body["gpu"]["minCudaVersion"] == "12.8"
+
+
+def test_a_booting_pod_can_be_terminated(capsys):
+    """GraphQL's desiredStatus said RUNNING while a pod booted; a pod stuck in
+    STARTING must stay reachable for stop and terminate or it keeps billing."""
+    booting = v2_pod(status="STARTING", runtime=None, ssh={"direct": None, "proxy": None})
+    t = FakeTransport().queue(200, CATALOG).queue(*v2_listing(booting)).queue(204, b"")
+    assert run_with(v2(t), ["terminate", "--pod", "abc123", "-y"]) == 0
+    assert (t.last.method, t.last.url) == ("DELETE", V2_BASE + "/pods/abc123")
+
+
+def test_a_booting_pod_counts_in_the_running_rows(capsys):
+    booting = v2_pod(status="PROVISIONING", runtime=None, ssh={"direct": None, "proxy": None})
+    t = FakeTransport().queue(200, CATALOG).queue(*v2_listing(booting))
+    assert run_with(v2(t), ["pods"]) == 0
+    assert "running: 1 pod(s), 2.000 $/hr" in capsys.readouterr().out
+
+
+def test_cloud_all_does_not_swallow_other_errors():
+    t = FakeTransport().queue(400, {"title": "Bad Request", "detail": "templateId must be a string"})
+    with pytest.raises(RunpodError, match="templateId"):
+        v2(t).create_pod({"name": "x", "gpuTypeIds": [GPU_ID], "cloudType": "ALL"})
+    assert len(t.calls) == 1
+
+
+def test_an_empty_listing_response_is_an_error_not_no_pods():
+    t = FakeTransport().queue(200, CATALOG).queue(200, b"")
+    with pytest.raises(RunpodError, match="unexpected response"):
+        v2(t).list_pods()

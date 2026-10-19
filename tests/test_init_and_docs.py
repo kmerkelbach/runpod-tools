@@ -202,3 +202,17 @@ def test_killswitch_falls_back_to_rest_v1_when_v2_fails(tmp_path):
 def test_docs_never_put_the_api_key_on_a_command_line():
     for rel in ("docs/fleet-pattern.md", "examples/killswitch.sh", "README.md", "AGENTS.md", "docs/gotchas.md"):
         assert "RUNPOD_API_KEY=$RUNPOD_API_KEY" not in (ROOT / rel).read_text(), rel
+
+
+def test_killswitch_treats_a_v2_conflict_as_already_done(tmp_path):
+    env = fake_curl(tmp_path, "409")
+    result = run_killswitch(env, action="stop")
+    assert result.returncode == 0, result.stdout
+    assert len(curl_calls(env)) == 1
+
+
+def test_killswitch_curl_calls_have_a_timeout(tmp_path):
+    env = fake_curl(tmp_path)
+    run_killswitch(env)
+    [args] = curl_calls(env)
+    assert "--max-time" in args
