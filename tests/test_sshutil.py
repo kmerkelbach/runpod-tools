@@ -151,6 +151,9 @@ class ClientStub:
     def list_pods(self):
         return self.sequence.pop(0)
 
+    def get_pod(self, pod_id):
+        return next((p for p in self.list_pods() if p.get("id") == pod_id), None)
+
 
 def test_wait_for_ssh_polls_until_endpoint_then_keyscans():
     no_ep = pod(id="p1", runtime=None)
@@ -233,6 +236,9 @@ def test_wait_for_ssh_tolerates_transient_api_errors():
             if self.n == 1:
                 raise RunpodError("gateway timeout", 504)
             return [pod(id="p1")]
+
+        def get_pod(self, pod_id):
+            return self.list_pods()[0]
 
     ep = wait_for_ssh(Flaky(), "p1", timeout=100, poll=1, sleep=lambda s: None, keyscan=lambda e: True,
                       clock=iter(range(0, 1000)).__next__)

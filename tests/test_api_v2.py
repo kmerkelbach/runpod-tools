@@ -2,6 +2,8 @@
 and v2 responses, print the same thing."""
 
 
+from datetime import UTC, datetime
+
 import pytest
 
 from runpod_tools.api import RunpodClient, RunpodError
@@ -16,6 +18,8 @@ from runpod_tools.api_v2 import (
 from runpod_tools.cli import main
 from runpod_tools.config import Config
 from runpod_tools.podcache import PodCache
+from runpod_tools.pods import SshEndpoint, ssh_endpoint, uptime_seconds
+from runpod_tools.sshutil import wait_for_ssh
 from tests.fakes import FakeTransport, graphql_ok, pod
 from tests.test_remote import Recorder, cfg
 
@@ -389,3 +393,55 @@ def test_an_empty_listing_response_is_an_error_not_no_pods():
     t = FakeTransport().queue(200, CATALOG).queue(200, b"")
     with pytest.raises(RunpodError, match="unexpected response"):
         v2(t).list_pods()
+
+
+# -- the listing is a summary (seen 2026-10-27) ---------------------------------------
+
+SUMMARY_SSH = {"direct": None, "proxy": {"host": "ssh.runpod.io", "port": 22, "username": "abc123-1234",
+                                         "command": "ssh ..."}}
+
+
+def summary_pod(**over) -> dict:
+    """A running pod as GET /v2/pods lists it: no runtime, no direct ssh."""
+    return v2_pod(runtime=None, ssh=SUMMARY_SSH, **over)
+
+
+def test_get_pod_reads_the_single_pod_endpoint():
+    transport = FakeTransport().queue(200, v2_pod()).queue(200, CATALOG)
+    found = v2(transport).get_pod("abc123")
+    assert transport.calls[0].url == f"{V2_BASE}/pods/abc123"
+    assert ssh_endpoint(found) == SshEndpoint("1.2.3.4", 40022)
+
+
+def test_get_pod_of_a_gone_pod_is_none():
+    transport = FakeTransport().queue(404, {"error": "pod not found"})
+    assert v2(transport).get_pod("gone") is None
+
+
+def test_ssh_finds_the_endpoint_of_a_summary_listing(capsys):
+    # No catalog cache in tests: the detail resolves GPU names again.
+    transport = (FakeTransport().queue(200, CATALOG).queue(*v2_listing(summary_pod()))
+                 .queue(200, v2_pod()).queue(200, CATALOG))
+    code = run_with(v2(transport), ["ssh", "--pod", "abc123", "--print"], config=cfg())
+    assert code == 0
+    assert capsys.readouterr().out.startswith("ssh root@1.2.3.4 -p 40022")
+
+
+def test_wait_polls_the_pod_not_the_listing():
+    transport = FakeTransport().queue(200, v2_pod()).queue(200, CATALOG)
+    ep = wait_for_ssh(v2(transport), "abc123", timeout=10, poll=1, sleep=lambda s: None,
+                      keyscan=lambda e: True, clock=iter(range(100)).__next__)
+    assert ep == SshEndpoint("1.2.3.4", 40022)
+    assert transport.calls[0].url == f"{V2_BASE}/pods/abc123"
+
+
+def test_summary_listing_bills_from_started_at():
+    listed = legacy_pod(summary_pod(startedAt="2026-10-27T14:00:00Z"), {})
+    now = datetime(2026, 10, 27, 15, 30, tzinfo=UTC).timestamp()
+    assert uptime_seconds(listed, now=now) == 5400
+    assert 2.0 * uptime_seconds(listed, now=now) / 3600 == pytest.approx(3.0)
+
+
+def test_stopped_pod_has_no_started_at_uptime():
+    listed = legacy_pod(summary_pod(status="EXITED", startedAt="2026-10-27T14:00:00Z"), {})
+    assert uptime_seconds(listed, now=0) is None

@@ -89,15 +89,24 @@ class Context:
             return select_pods(pods, ids=ids, select_all=select_all, statuses=["RUNNING"],
                                interactive=self.isatty, multi=multi, name_prefix=self.config.pod.name_prefix)
 
+        def with_endpoints(pods: list[dict]) -> list[dict]:
+            # A v2 listing has no endpoints at all; the pod itself does.
+            if getattr(client, "listing_has_runtime", True):
+                return pods
+            return [p if ssh_endpoint(p) is not None else (client.get_pod(p["id"]) or p) for p in pods]
+
         if not from_cache:
-            return select(listing)
+            return with_endpoints(select(listing))
         try:
             chosen = select(listing)
         except SelectionError:
-            return select(client.list_pods())
+            return with_endpoints(select(client.list_pods()))
         if all(ssh_endpoint(p) is not None for p in chosen):
             return chosen
-        return select(client.list_pods())
+        completed = with_endpoints(chosen)
+        if all(ssh_endpoint(p) is not None for p in completed):
+            return completed
+        return with_endpoints(select(client.list_pods()))
 
     def print(self, *parts: Any) -> None:
         print(*parts, file=self.out)

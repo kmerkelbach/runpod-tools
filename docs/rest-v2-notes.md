@@ -131,6 +131,15 @@ filters by status, name, GPU type or data center.**
 
 ### `Pod` object (response of list/get/create/update/action)
 
+**The list response is a summary (observed 2026-10-27).** `GET /v2/pods`
+returns `runtime: null` and `ssh.direct: null` for every running pod; only
+`GET /v2/pods/{podId}` fills them in (same pod, same moment: list null, get
+`195.26.233.65:28688` and `runtime.uptime`). The docs do not say so. rpt
+therefore reads endpoints and runtime through `get_pod` (one GET per pod
+looked up; `listing_has_runtime = False` on the v2 client), and derives a
+listed running pod's uptime, and so its cost so far, from `startedAt`. The
+list still has `startedAt`, `cost`, `status` and `ssh.proxy`.
+
 | Field | Type | Notes |
 | --- | --- | --- |
 | `id*` | string | |

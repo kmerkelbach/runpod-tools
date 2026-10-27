@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 
 
 @dataclass(frozen=True)
@@ -32,10 +34,18 @@ def gpu_label(pod: dict) -> str:
     return name if (count == 1 and name != "GPU") else f"{count}x {name}"
 
 
-def uptime_seconds(pod: dict) -> int | None:
+def uptime_seconds(pod: dict, now: float | None = None) -> int | None:
+    """The runtime's uptime; else, for a v2 listing (which has no runtime),
+    the seconds since the pod started, which is what it bills for."""
     runtime = pod.get("runtime") or {}
     value = runtime.get("uptimeInSeconds")
-    return int(value) if value is not None else None
+    if value is not None:
+        return int(value)
+    started = pod.get("startedAt")
+    if not started:
+        return None
+    started_at = datetime.fromisoformat(started.replace("Z", "+00:00")).timestamp()
+    return max(0, int((time.time() if now is None else now) - started_at))
 
 
 def format_uptime(seconds: int | None) -> str:

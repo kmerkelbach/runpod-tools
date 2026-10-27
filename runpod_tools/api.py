@@ -277,6 +277,14 @@ class RunpodClient:
             self.pod_cache.write(pods)
         return pods
 
+    # GraphQL's pod listing carries each pod's runtime (uptime, ports).
+    listing_has_runtime = True
+
+    def get_pod(self, pod_id: str) -> dict | None:
+        """One pod with its runtime (uptime, ports), or None if it is gone.
+        GraphQL's listing carries the runtime, so v1 reads it from there."""
+        return next((p for p in self.list_pods() if p.get("id") == pod_id), None)
+
     def cached_pods(self) -> tuple[list[dict], bool]:
         """The pod listing for commands that only need an endpoint, and whether
         it came from the cache. A current cached listing is used as is; otherwise

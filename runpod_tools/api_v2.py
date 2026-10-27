@@ -97,6 +97,22 @@ class RestV2Client(RunpodClient):
             self.pod_cache.write(pods)
         return pods
 
+    # v2's listing is a summary without runtime or ssh.direct.
+    listing_has_runtime = False
+
+    def get_pod(self, pod_id: str) -> dict | None:
+        """One pod with its runtime and direct ssh endpoint, or None if it is
+        gone. v2's listing is a summary: it reports ``runtime`` and
+        ``ssh.direct`` as null even for running pods (seen 2026-10-27 on every
+        running pod of the account), so endpoints come only from here."""
+        try:
+            pod = self.rest("GET", f"/pods/{pod_id}")
+        except RunpodError as exc:
+            if exc.status == 404:
+                return None
+            raise
+        return legacy_pod(pod, self._gpu_names()) if pod else None
+
     def create_pod(self, payload: Mapping[str, Any]) -> dict:
         bodies = create_bodies(payload)
         with self.changing_pods():
@@ -227,6 +243,8 @@ def legacy_pod(pod: dict, gpu_names: Mapping[str, str]) -> dict:
             "uptimeInSeconds": runtime.get("uptime"),
             "ports": legacy_ports(pod),
         },
+        # The listing has no runtime; a running pod's billed time counts from here.
+        "startedAt": pod.get("startedAt") if pod.get("status") == "RUNNING" else None,
     }
 
 

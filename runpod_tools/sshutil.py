@@ -160,11 +160,10 @@ def wait_for_ssh(
     seen_endpoint = False
     while True:
         try:
-            pods = {p.get("id"): p for p in client.list_pods()}
+            pod = client.get_pod(pod_id)
         except RunpodError as exc:
             log(f"pod {pod_id}: api error while polling ({exc}); retrying")
-            pods = {}
-        pod = pods.get(pod_id)
+            pod = None
         ep = ssh_endpoint(pod) if pod else None
         if ep is not None:
             seen_endpoint = True
